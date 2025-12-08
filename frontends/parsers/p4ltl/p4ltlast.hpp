@@ -3,16 +3,16 @@
 
 #include <string>
 #include <vector>
-#include <stdexcept>
 
 namespace P4LTL
 {
     class AstNode
 {
-private:
+    private:
     std::vector<AstNode*> outgoingNodes;
 
-public:
+    public:
+    virtual ~AstNode() = default;
     virtual std::string toString() const = 0;
     const std::vector<AstNode*>& getOutgoingNodes () const;
     void addOutgoing(AstNode*);

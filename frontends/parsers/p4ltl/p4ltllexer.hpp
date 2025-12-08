@@ -4,6 +4,7 @@
 #ifndef yyFlexLexerOnce
 #include <FlexLexer.h>
 #endif
+#include "frontends/parsers/p4ltl/p4ltlparser.hpp"
 
 namespace P4LTL { // note: depends upon FlexLexer.h and p4LTLParser.hpp
 

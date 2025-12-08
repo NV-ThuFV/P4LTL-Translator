@@ -1,4 +1,6 @@
-#include "backends/verify/translate/p4ltl_utils.h"
+#include "p4ltl_utils.h"
+
+#include <stdexcept>
 
 // bool isAPNode(P4LTL::AstNode* node){
 // 	if(dynamic_cast<P4LTL::P4LTLAtomicProposition*>(node) != nullptr)
@@ -15,14 +17,14 @@
 // 	return aps;
 // }
 
-void P4LTLTranslator::getAllNodes(std::vector<P4LTL::AstNode*>& nodes, P4LTL::AstNode* root){
+void P4LTLTranslator::getAllNodes(std::vector<P4LTL::AstNode*>& nodes, P4LTL::AstNode* root) const{
 	nodes.push_back(root);
     for(auto child: root->getOutgoingNodes()){
         getAllNodes(nodes, child);
     }
 }
 
-std::vector<P4LTL::AstNode*> P4LTLTranslator::getAllNodes(P4LTL::AstNode* root){
+std::vector<P4LTL::AstNode*> P4LTLTranslator::getAllNodes(P4LTL::AstNode* root) const{
 	std::vector<P4LTL::AstNode*> nodes;
 	getAllNodes(nodes, root);
 	return nodes;
@@ -175,7 +177,7 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::BinOpNode* node){
 			}
 			else{
 				sizes[variable] = sizeLeft;
-				cstring size = p4Translator->toString(sizeLeft);
+				cstring size = p4Translator->toString(static_cast<int>(sizeLeft));
 				cstring powerFunc = "power_2_"+size+"()";
             	cstring funcName = "";
             	if(binTermOp->getOp() == " + ") funcName = "add.bv"+size;
@@ -220,11 +222,7 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::Predicate* node){
 		return valid->getHeader()+".valid == true";
 	}
 	else if(auto apply = dynamic_cast<P4LTL::Apply*>(node)){
-		// change to basic translation
-		if(apply->getAction().empty())
-			return apply->getTable()+".isApplied";
-		else
-			return apply->getTable()+"."+apply->getAction()+".isApplied";
+		throw std::runtime_error("Apply(...) predicates are not supported in this project.");
 	}
 	else return node->toString();
 }
@@ -248,7 +246,7 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::Name* node){
 }
 
 cstring P4LTLTranslator::translateP4LTL(P4LTL::Key* node){
-	return node->getTable()+"."+node->getKey();
+	throw std::runtime_error("Key(table, key) terms are not supported in this project.");
 }
 
 cstring P4LTLTranslator::translateP4LTL(P4LTL::ArrayAccessExprssion* node){

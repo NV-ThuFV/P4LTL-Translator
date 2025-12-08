@@ -1,4 +1,5 @@
 #include "p4ltlast.hpp"
+#include <stdexcept>
 
 namespace P4LTL
 {

@@ -14,6 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include <config.h>
+#if HAVE_EXECINFO_H
+#include <execinfo.h>
+#endif
 #include "backtrace.h"
 #include <stdarg.h>
 #include <functional>

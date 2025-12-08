@@ -45,7 +45,13 @@ limitations under the License.
 
 
 // generated ir file
+#if __has_include("ir/ir-generated.h")
 #include "ir/ir-generated.h"
+#elif __has_include("ir-generated.h")
+#include "ir-generated.h"
+#else
+#warning "ir-generated.h is missing. Run the IR generator (e.g. target genIR) to create it."
+#endif
 
 class JSONLoader;
 #include "json_generator.h"
