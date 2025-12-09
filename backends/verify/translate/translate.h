@@ -116,6 +116,7 @@ public:
 	// P4LTL Specification
 	void setP4LTLSpec(cstring key, P4LTL::AstNode* root);
 	void setP4LTLFreeVars(cstring decl);
+	void setP4LTLFreeVarValue(cstring name, cstring type, cstring value);
 
 	void setCPI(cstring table, cstring assumeCond);
 	void setCPISIMP(cstring table, cstring keyCond, cstring actionCond);

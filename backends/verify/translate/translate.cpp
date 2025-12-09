@@ -317,6 +317,10 @@ void Translator::setP4LTLFreeVars(cstring decl){
     ltlTranslator->createFreeVariables(decl);
 }
 
+void Translator::setP4LTLFreeVarValue(cstring name, cstring type, cstring value){
+    ltlTranslator->addFreeVariableWithValue(name, type, value);
+}
+
 // CPI related
 void Translator::setCPI(cstring table, cstring assumeCond) {
     CPI[table].push_back(assumeCond);
@@ -505,6 +509,7 @@ void Translator::writeToFile(){
         }
         out << "\n";
 
+        auto freeValues = ltlTranslator->getFreeVariableValues();
         for(auto item:ltlTranslator->getFreeVariables()){
             if(isGlobalVariable(item.first)){
                 std::cerr << "ERROR: "+item.first+" is a global variable. Please change the name.\n";
@@ -519,9 +524,11 @@ void Translator::writeToFile(){
                             +"() );\n");
                 // std::couts << item.second << " " << ltlTranslator->getSize(item.second) << std::endl;
             }
-
-            // havocProcedure.addStatement("    havoc "+item.second+";\n");
-            // havocProcedure.addModifiedGlobalVariables(item.second);
+            auto itVal = freeValues.find(item.second);
+            if(itVal != freeValues.end()){
+                mainProcedure.addFrontStatement("    "+item.second+" := "+itVal->second+";\n");
+                mainProcedure.addModifiedGlobalVariables(item.second);
+            }
         }
         for(cstring variable:ltlTranslator->getVariables()){
             addGlobalVariables(variable);

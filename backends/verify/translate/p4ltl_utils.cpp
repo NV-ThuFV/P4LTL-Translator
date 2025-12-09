@@ -323,6 +323,24 @@ void P4LTLTranslator::addFreeVariable(cstring variable){
 	}
 }
 
+void P4LTLTranslator::addFreeVariableWithValue(cstring name, cstring type, cstring value){
+	if(type != "bool" && type != "int" && !isBvType(type)){
+		std::cout << "ERROR: Unsupported type \""<< type << "\"" << std::endl; 
+		std::abort();
+	}
+	freeVars[name] = "_p4ltl_free_"+name;
+	if(isBvType(type)){
+		int length = getBvLength(type);
+		sizes["_p4ltl_free_"+name] = length;
+		addDeclaration("\nvar "+freeVars[name]+":int;\n");
+	} else if (type == "int") {
+		addDeclaration("\nvar "+freeVars[name]+":int;\n");
+	} else { // bool
+		addDeclaration("\nvar "+freeVars[name]+":bool;\n");
+	}
+	freeVarValues[freeVars[name]] = value;
+}
+
 void P4LTLTranslator::createFreeVariables(cstring decl){
 	std::string str = decl.c_str();
 	str.erase(std::remove_if(str.begin(), str.end(), [](char c) {
@@ -339,6 +357,10 @@ void P4LTLTranslator::createFreeVariables(cstring decl){
 	if(start < str.length()){
 		addFreeVariable(str.substr(start));
 	}
+}
+
+std::map<cstring, cstring> P4LTLTranslator::getFreeVariableValues(){
+	return freeVarValues;
 }
 
 /*

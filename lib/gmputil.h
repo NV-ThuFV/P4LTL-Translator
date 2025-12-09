@@ -17,6 +17,7 @@ limitations under the License.
 #ifndef _LIB_GMPUTIL_H_
 #define _LIB_GMPUTIL_H_
 
+// Use generated config.h (from build dir)
 #include "config.h"
 
 #if HAVE_LIBGMP
@@ -35,9 +36,9 @@ namespace Util {
 big_int ripBits(big_int &value, int bits);
 
 struct BitRange {
-    unsigned  lowIndex;
-    unsigned  highIndex;
-    big_int value;
+  unsigned lowIndex;
+  unsigned highIndex;
+  big_int value;
 };
 
 // Find a consecutive scan of 1 bits at the "bottom"
@@ -52,50 +53,71 @@ big_int mask(unsigned bits);
 
 #if HAVE_LIBGMP
 inline unsigned scan0(const boost::multiprecision::mpz_int &val, unsigned pos) {
-    return mpz_scan0(val.backend().data(), pos); }
+  return mpz_scan0(val.backend().data(), pos);
+}
 inline unsigned scan1(const boost::multiprecision::mpz_int &val, unsigned pos) {
-    return mpz_scan1(val.backend().data(), pos); }
+  return mpz_scan1(val.backend().data(), pos);
+}
 #else
-inline unsigned scan0_positive(const boost::multiprecision::cpp_int &val, unsigned pos) {
-    while (boost::multiprecision::bit_test(val, pos)) ++pos;
-    return pos; }
-inline unsigned scan1_positive(const boost::multiprecision::cpp_int &val, unsigned pos) {
-    if (val == 0 || pos > boost::multiprecision::msb(val)) return ~0U;
-    unsigned lsb = boost::multiprecision::lsb(val);
-    if (lsb >= pos) return lsb;
-    while (!boost::multiprecision::bit_test(val, pos)) ++pos;
-    return pos; }
+inline unsigned scan0_positive(const boost::multiprecision::cpp_int &val,
+                               unsigned pos) {
+  while (boost::multiprecision::bit_test(val, pos))
+    ++pos;
+  return pos;
+}
+inline unsigned scan1_positive(const boost::multiprecision::cpp_int &val,
+                               unsigned pos) {
+  if (val == 0 || pos > boost::multiprecision::msb(val))
+    return ~0U;
+  unsigned lsb = boost::multiprecision::lsb(val);
+  if (lsb >= pos)
+    return lsb;
+  while (!boost::multiprecision::bit_test(val, pos))
+    ++pos;
+  return pos;
+}
 inline unsigned scan0(const boost::multiprecision::cpp_int &val, unsigned pos) {
-    if (val < 0) return scan1_positive(-val - 1, pos);
-    return scan0_positive(val, pos); }
+  if (val < 0)
+    return scan1_positive(-val - 1, pos);
+  return scan0_positive(val, pos);
+}
 inline unsigned scan1(const boost::multiprecision::cpp_int &val, unsigned pos) {
-    if (val < 0) return scan0_positive(-val - 1, pos);
-    return scan1_positive(val, pos); }
+  if (val < 0)
+    return scan0_positive(-val - 1, pos);
+  return scan1_positive(val, pos);
+}
 #endif
 
-
-}  // namespace Util
+} // namespace Util
 
 static inline unsigned bitcount(big_int v) {
-    if (v < 0) return ~0U;
-    unsigned rv = 0;
-    while (v != 0) { v &= v-1; ++rv; }
-    return rv;
+  if (v < 0)
+    return ~0U;
+  unsigned rv = 0;
+  while (v != 0) {
+    v &= v - 1;
+    ++rv;
+  }
+  return rv;
 }
 
 static inline int ffs(big_int v) {
-    if (v <= 0) return -1;
-    return boost::multiprecision::lsb(v);
+  if (v <= 0)
+    return -1;
+  return boost::multiprecision::lsb(v);
 }
 
 static inline int floor_log2(big_int v) {
-    int rv = -1;
-    while (v > 0) { rv++; v /= 2; }
-    return rv;
+  int rv = -1;
+  while (v > 0) {
+    rv++;
+    v /= 2;
+  }
+  return rv;
 }
 
 static inline int ceil_log2(big_int v) {
-    return v ? floor_log2(v-1) + 1 : -1;
+  return v ? floor_log2(v - 1) + 1 : -1;
 }
 
 #endif /* _LIB_GMPUTIL_H_ */

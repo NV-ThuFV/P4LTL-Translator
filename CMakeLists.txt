@@ -22,6 +22,15 @@ endif()
 
 project (P4C)
 
+# When included as a subdirectory, honor externally provided p4c paths;
+# otherwise default to the current source/binary dirs.
+if (NOT DEFINED P4C_SOURCE_DIR)
+    set(P4C_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+if (NOT DEFINED P4C_BINARY_DIR)
+    set(P4C_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
 set (CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 set (P4C_RUNTIME_OUTPUT_DIRECTORY bin)
 set (P4C_LIBRARY_OUTPUT_DIRECTORY lib)
@@ -210,12 +219,14 @@ if(CMAKE_COMPILER_IS_GNUCC)
 endif ()
 
 include_directories (
+  ${P4C_BINARY_DIR}               # generated headers root
+  ${P4C_BINARY_DIR}/ir            # generated IR headers
+  ${P4C_SOURCE_DIR}/ir            # IR sources
   ${P4C_SOURCE_DIR}/frontends
   ${P4C_SOURCE_DIR}/backends
   ${P4C_SOURCE_DIR}/extensions
   ${P4C_SOURCE_DIR}
   ${P4C_SOURCE_DIR}/test/frameworks/gtest/googletest/include
-  ${P4C_BINARY_DIR}
   )
 add_definitions (-DCONFIG_PREFIX="${CMAKE_INSTALL_PREFIX}")
 add_definitions (-DCONFIG_PKGDATADIR="${CMAKE_INSTALL_PREFIX}/${P4C_ARTIFACTS_OUTPUT_DIRECTORY}")
@@ -285,6 +296,10 @@ endif ()
 add_subdirectory (frontends)
 add_subdirectory (midend)
 add_subdirectory (control-plane)
+add_dependencies(ir genIR)
+if (TARGET frontend)
+  add_dependencies(frontend genIR)
+endif()
 
 if (ENABLE_BMV2)
     add_subdirectory (backends/bmv2)
@@ -308,6 +323,11 @@ if (ENABLE_GTESTS)
   add_subdirectory (test)
 endif ()
 
+# Ensure verify backend sees generated IR
+if (TARGET verifybackend)
+  add_dependencies(verifybackend genIR)
+endif()
+
 # IR Generation
 set_source_files_properties(${IR_GENERATOR} PROPERTIES GENERATED TRUE)
 
@@ -330,6 +350,7 @@ set(temp_ir_genfiles
 set_source_files_properties (${temp_ir_genfiles} PROPERTIES GENERATED TRUE)
 
 add_custom_command (OUTPUT ${IR_GENERATED_SRCS}
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${P4C_BINARY_DIR}/ir
   COMMAND ${IR_GENERATOR} -i ir/ir-generated.cpp.tmp -o ir/ir-generated.h.tmp -t ir/gen-tree-macro.h.tmp ${IR_DEF_FILES}
   COMMAND awk -v name=ir-generated.cpp -f ${fixup_file} ir/ir-generated.cpp.tmp > ir/ir-generated.cpp.fixup
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ir/ir-generated.cpp.fixup ir/ir-generated.cpp
@@ -341,7 +362,7 @@ add_custom_command (OUTPUT ${IR_GENERATED_SRCS}
   DEPENDS irgenerator ${IR_DEF_FILES}
   COMMENT "Generating IR class files")
 
-add_custom_target(genIR DEPENDS ${IR_GENERATED_SRCS})
+add_custom_target(genIR ALL DEPENDS ${IR_GENERATED_SRCS})
 
 # Header files
 # p4test needs all the backend include files, whether the backend is enabled or not
