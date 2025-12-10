@@ -2,6 +2,7 @@
 #define BACKENDS_VERIFY_TRANSLATE_OPTIONS_H_
 
 #include <getopt.h>
+#include <string>
 #include "frontends/common/options.h"
 
 class P4VerifyOptions : public CompilerOptions {
@@ -31,6 +32,9 @@ class P4VerifyOptions : public CompilerOptions {
     bool bitBlasting = false;
 
     bool CpiIfElse = false;
+
+    // Cpigen preset switch
+    bool cpigen = false;
 
     bool acceptEntry = false; // use accept as process entry while ignoring futher process for reject
 
@@ -181,6 +185,39 @@ class P4VerifyOptions : public CompilerOptions {
                            havocStatefulElements = true;
                            return true; },
                        "havoc stateful elements (counter, register, meter)");
+
+        registerOption("--cpigen", nullptr,
+                       [this](const char*) {
+                           enableCpigenPreset();
+                           return true;
+                       },
+                       "enable CPI generation preset (cpigen)");
+    }
+
+    /**
+     * Enable cpigen preset: consolidate common translator tweaks used by CPI generation.
+     * @param includeFlags concatenated \"-I\" flags (optional, keeps existing if empty).
+     * @param bv2intPreset enable bv2int lowering.
+     * @param bitBlastingPreset enable bit-blasting.
+     * @param havocPreset enable havocing stateful elements.
+     * @param cpiIfElsePreset enable CPI if-else lowering.
+     */
+    void enableCpigenPreset(const std::string& includeFlags = "",
+                            bool bv2intPreset = false,
+                            bool bitBlastingPreset = false,
+                            bool havocPreset = false,
+                            bool cpiIfElsePreset = false) {
+        cpigen = true;
+        if (!includeFlags.empty()) {
+            preprocessor_options = cstring(includeFlags);
+        }
+        bv2int = bv2intPreset;
+        bitBlasting = bitBlastingPreset;
+        havocStatefulElements = havocPreset;
+        CpiIfElse = cpiIfElsePreset;
+        // Cpigen enforces straight-line translation by default.
+        whileLoop = false;
+        gotoOrIf = false;
     }
 };
 

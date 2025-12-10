@@ -316,7 +316,7 @@ void P4LTLTranslator::addFreeVariable(cstring variable){
 		int length = getBvLength(type);
 		sizes["_p4ltl_free_"+name] = length;
 		addDeclaration("\nvar "+freeVars[name]+":int;\n");
-		// TODO: add assumptions for bv
+		addDeclaration("assume(0 <= "+freeVars[name]+" && "+freeVars[name]+" < power_2_"+Util::toString(length)+"());\n");
 	}
 	else{
 		addDeclaration("\nvar "+freeVars[name]+":"+type+";\n");
@@ -333,6 +333,7 @@ void P4LTLTranslator::addFreeVariableWithValue(cstring name, cstring type, cstri
 		int length = getBvLength(type);
 		sizes["_p4ltl_free_"+name] = length;
 		addDeclaration("\nvar "+freeVars[name]+":int;\n");
+		addDeclaration("assume(0 <= "+freeVars[name]+" && "+freeVars[name]+" < power_2_"+Util::toString(length)+"());\n");
 	} else if (type == "int") {
 		addDeclaration("\nvar "+freeVars[name]+":int;\n");
 	} else { // bool

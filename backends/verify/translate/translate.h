@@ -5,6 +5,7 @@
 #include <fstream>
 #include <map>
 #include <queue>
+#include <string>
 #include "backends/verify/translate/p4ltl_utils.h"
 #include "ir/ir.h"
 #include "boogie_procedure.h"
@@ -70,11 +71,16 @@ private:
 	typedef int CHOICE_TYPE;
 	std::map<cstring, std::map<cstring, CHOICE_TYPE>> choiceMap;
 
+	// 输出帮助
+	void writeInternal(std::ostream& declOut, std::ostream& procOut);
+	void emitOutput(std::ostream& declOut, std::ostream& procOut);
+
 public:
 	Translator() = delete;
 	Translator(std::ostream &out, P4VerifyOptions &options, BMV2CmdsAnalyzer* bMV2CmdsAnalyzer = nullptr);
 	P4LTLTranslator* ltlTranslator;
 	void writeToFile();
+	void writeToString(std::string &declOut, std::string &procsOut);
 	
 	cstring toString();
 	cstring toString(int val);
@@ -227,6 +233,9 @@ public:
 	cstring translate(const IR::P4Table *p4Table, std::map<cstring, cstring> switchCases);
 	cstring translate(const IR::Parameter *parameter, cstring arg="others");
 	void translate(const IR::ActionList *actionList, cstring arg);
+
+	// Expose accumulated declaration for composed output
+	const cstring& getDeclaration() const { return declaration; }
 
 
 };

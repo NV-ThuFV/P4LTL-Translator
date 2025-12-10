@@ -472,7 +472,7 @@ void Translator::addUAFunctions(){
     
 }
 
-void Translator::writeToFile(){
+void Translator::writeInternal(std::ostream& declOut, std::ostream& procOut){
     if(options.p4ltlSpec){
         // merge fairness into property
         if(p4ltlSpec.find(P4LTL_KEYS_FAIR) != p4ltlSpec.end()) {
@@ -501,13 +501,13 @@ void Translator::writeToFile(){
                 for(auto spec:p4ltlSpec[str]){
                     cstring cont = ltlTranslator->translateP4LTL(spec);
                     std::cout << str << std::endl << " " << cont << std::endl;
-                    if(str == P4LTL_KEYS_CPI_SPEC) out << P4LTL_KEYS_CPI;
-                    else out << str;
-                    out << " " << cont << "\n";
+                    if(str == P4LTL_KEYS_CPI_SPEC) procOut << P4LTL_KEYS_CPI;
+                    else procOut << str;
+                    procOut << " " << cont << "\n";
                 }
             }
         }
-        out << "\n";
+        procOut << "\n";
 
         auto freeValues = ltlTranslator->getFreeVariableValues();
         for(auto item:ltlTranslator->getFreeVariables()){
@@ -516,6 +516,25 @@ void Translator::writeToFile(){
                 std::abort();
             }
             addGlobalVariables(item.second);
+            // For cpigen, ensure declaration is emitted for free var (int/bool/bv).
+            if(options.cpigen){
+                // Avoid duplicate declarations.
+                std::string declProbe = "var " + std::string(item.second) + ":";
+                if(declaration.find(declProbe.c_str()) == nullptr){
+                    int sz = ltlTranslator->getSize(item.second);
+                    if(sz == -1){
+                        // default to bool if size unknown? infer from value: if value is "true"/"false" then bool else int
+                        auto itVal = freeValues.find(item.second);
+                        if(itVal != freeValues.end() && (itVal->second == "true" || itVal->second == "false")){
+                            addDeclaration("\nvar "+item.second+":bool;\n");
+                        } else {
+                            addDeclaration("\nvar "+item.second+":int;\n");
+                        }
+                    } else {
+                        addDeclaration("\nvar "+item.second+":int;\n");
+                    }
+                }
+            }
             // Add bv
             if(ltlTranslator->getSize(item.second) != -1){
                 if(options.bv2int)
@@ -526,8 +545,19 @@ void Translator::writeToFile(){
             }
             auto itVal = freeValues.find(item.second);
             if(itVal != freeValues.end()){
-                mainProcedure.addFrontStatement("    "+item.second+" := "+itVal->second+";\n");
-                mainProcedure.addModifiedGlobalVariables(item.second);
+                if(options.cpigen){
+                    // 在 cpigen 模式下，将自由变量的随机值推入 havocProcedure 末尾，确保被 main() 前的调用生效。
+                    havocProcedure.addStatement("    "+item.second+" := "+itVal->second+";\n");
+                    havocProcedure.addModifiedGlobalVariables(item.second);
+                    if(options.bv2int && ltlTranslator->getSize(item.second) != -1){
+                        havocProcedure.addStatement("    assume(0 <= "+item.second+" && "+
+                            item.second + " < power_2_" +toString(ltlTranslator->getSize(item.second))
+                            +"() );\n");
+                    }
+                } else {
+                    mainProcedure.addFrontStatement("    "+item.second+" := "+itVal->second+";\n");
+                    mainProcedure.addModifiedGlobalVariables(item.second);
+                }
             }
         }
         for(cstring variable:ltlTranslator->getVariables()){
@@ -559,6 +589,18 @@ void Translator::writeToFile(){
             addDeclaration(declaration);
         }
 
+        // cpigen: emit free var values into havoc tail
+        if(options.cpigen){
+            auto freeValues = ltlTranslator->getFreeVariableValues();
+            for(auto item:ltlTranslator->getFreeVariables()){
+                auto itVal = freeValues.find(item.second);
+                if(itVal != freeValues.end()){
+                    havocProcedure.addStatement("    "+item.second+" := "+itVal->second+";\n");
+                    havocProcedure.addModifiedGlobalVariables(item.second);
+                }
+            }
+        }
+
         for(auto item:p4ltlSpec){
             for(auto spec:item.second){
                 std::map<cstring, std::set<cstring>> oldArrays = ltlTranslator->getOldArrays(spec);
@@ -579,17 +621,17 @@ void Translator::writeToFile(){
     }
 
 
-    if(options.ultimateAutomizer && !options.bitBlasting && options.bv2int){
+    // Emit power_2_* helpers whenever using int encoding (bv2int), regardless of UA.
+    if(options.bv2int){
         addUAFunctions();
     }
 
     addProcedure(mainProcedure);
-    if(options.whileLoop) {
+    if(options.cpigen || options.whileLoop) {
         addProcedure(havocProcedure);
-        // add old
-        if(options.ultimateAutomizer) {
-            addProcedure(oldProcedure);
-        }
+    }
+    if(options.whileLoop && options.ultimateAutomizer) {
+        addProcedure(oldProcedure);
     }
         
     std::queue<BoogieProcedure*> queue;
@@ -624,29 +666,73 @@ void Translator::writeToFile(){
     }
 
 
-    out << declaration;
-    // out << "\n";
-    // out << mainProcedure.toString();
-    // std::cout << mainProcedure.getName() << std::endl;
-    // std::cout << "Succ:" << std::endl;
-    // for(cstring succ:mainProcedure.succ){
-    //     std::cout << "  " << succ << std::endl;
-    // }
-    // for(BoogieProcedure procedure:procedures){
-    //     out << "\n";
-    //     out << procedure.toString();
-    // }
+    emitOutput(declOut, procOut);
+}
+
+void Translator::emitOutput(std::ostream& declOut, std::ostream& procOut){
+    declOut << declaration;
     std::map<cstring, BoogieProcedure>::iterator iter;
     for (iter=procedures.begin(); iter!=procedures.end(); iter++){
         if(iter->first != deparser){
-            // std::cout << iter->first << std::endl;
-            // std::cout << "Succ:" << std::endl;
-            // for(cstring succ:iter->second.succ){
-            //     std::cout << "  " << succ << std::endl;
-            // }
-            // std::cout << std::endl;
-            // out << "\n";
-            out << iter->second.toString();
+            procOut << iter->second.toString();
+        }
+    }
+}
+
+void Translator::writeToFile(){
+    writeInternal(out, out);
+}
+
+void Translator::writeToString(std::string &declOut, std::string &procsOut){
+    std::ostringstream declStream;
+    std::ostringstream procStream;
+    writeInternal(declStream, procStream);
+    declOut = declStream.str();
+    procsOut = procStream.str();
+
+   
+    if(options.cpigen && ltlTranslator){
+        auto freeValues = ltlTranslator->getFreeVariableValues();
+        for(auto item : ltlTranslator->getFreeVariables()){
+            const std::string varName = item.second.c_str();
+            const int bw = ltlTranslator->getSize(item.second);
+            auto itVal = freeValues.find(item.second);
+            const std::string val = (itVal != freeValues.end()) ? itVal->second.c_str() : "0";
+            const bool isBool = (val == "true" || val == "false");
+            const std::string declProbe = "var " + varName + ":";
+            if (declOut.find(declProbe) == std::string::npos) {
+                if (bw == -1) {
+                    declOut.append("\nvar " + varName + ":" + (isBool ? "bool" : "int") + ";\n");
+                } else {
+                    declOut.append("\nvar " + varName + ":int;\n");
+                }
+                if (options.bv2int && bw != -1) {
+                    declOut.append("assume(0 <= " + varName + " && " + varName +
+                                   " < power_2_" + toString(bw) + "());\n");
+                }
+            }
+
+            const std::string havocSig = "procedure {:inline 1} havocProcedure()";
+            size_t procPos = procsOut.find(havocSig);
+            if (procPos != std::string::npos) {
+                size_t modPos = procsOut.find("modifies", procPos);
+                size_t semiPos = (modPos != std::string::npos) ? procsOut.find(';', modPos) : std::string::npos;
+                if (modPos != std::string::npos && semiPos != std::string::npos &&
+                    procsOut.find(varName, modPos) > semiPos) {
+                    procsOut.insert(semiPos, ", " + varName);
+                    semiPos += varName.size() + 2;
+                }
+                size_t bracePos = procsOut.find('{', procPos);
+                size_t insertPos = (bracePos != std::string::npos) ? procsOut.find('\n', bracePos) : std::string::npos;
+                if (insertPos != std::string::npos) {
+                    std::string stmt = "    " + varName + " := " + val + ";\n";
+                    if (options.bv2int && bw != -1) {
+                        stmt += "    assume(0 <= " + varName + " && " + varName +
+                                " < power_2_" + toString(bw) + "() );\n";
+                    }
+                    procsOut.insert(insertPos + 1, stmt);
+                }
+            }
         }
     }
 }
@@ -3350,22 +3436,26 @@ void Translator::translate(const IR::Declaration_Instance *instance, cstring ins
             }
         }
 
-        // add children
-        addProcedure(main);
-        if(options.whileLoop){
-            // if(options.p4ltlSpec){
-                // mainProcedure.addStatement("        call "+name+"();\n");
-            // }
-            // else{
-                mainProcedure.addStatement("    while(true){\n");
-                mainProcedure.addStatement("        call "+name+"();\n");
-                mainProcedure.addStatement("    }\n");
-            // }
+        // add children and schedule execution
+        if(options.cpigen){
+            // Place havoc at the very beginning of the instance entry (often named 'main').
+            main.addFrontStatement("    call havocProcedure();\n");
         }
-        else
+
+        if(options.whileLoop){
+            main.addStatement(getIndent()+"call havocProcedure();\n");
+            main.addSucc(havocProcedure.getName());
+            addPred(havocProcedure.getName(), main.getName());
+            addProcedure(main);
+            mainProcedure.addStatement("    while(true){\n");
+            mainProcedure.addStatement("        call "+name+"();\n");
+            mainProcedure.addStatement("    }\n");
+        } else {
+            addProcedure(main);
             mainProcedure.addStatement("    call "+name+"();\n");
-        mainProcedure.addSucc(name);
-        addPred(name, mainProcedure.getName());
+            mainProcedure.addSucc(name);
+            addPred(name, mainProcedure.getName());
+        }
     }
 
     // TOFO: rename
@@ -4209,8 +4299,10 @@ void Translator::translate(const IR::P4Table *p4Table){
                                 // table.addFrontStatement("    var "+actionName+"."+translate(parameter)+";\n");
                                 addDeclaration("var "+name+"."+actionName+"."+translate(parameter)+";\n");
                                 addGlobalVariables(parameterName);
-                                havocProcedure.addModifiedGlobalVariables(parameterName);
-                                havocProcedure.addStatement("    havoc "+parameterName+";\n");
+                                if(!options.cpigen){
+                                    havocProcedure.addModifiedGlobalVariables(parameterName);
+                                    havocProcedure.addStatement("    havoc "+parameterName+";\n");
+                                }
                             }
                         }
                     }
