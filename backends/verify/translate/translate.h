@@ -75,6 +75,10 @@ private:
 	void writeInternal(std::ostream& declOut, std::ostream& procOut);
 	void emitOutput(std::ostream& declOut, std::ostream& procOut);
 
+	// cpigen 自由变量注入到声明与 havocProcedure
+	void addCpigenFreeVarToHavoc(const cstring& varName, int bitwidth,
+	                             const std::string& value);
+
 public:
 	Translator() = delete;
 	Translator(std::ostream &out, P4VerifyOptions &options, BMV2CmdsAnalyzer* bMV2CmdsAnalyzer = nullptr);

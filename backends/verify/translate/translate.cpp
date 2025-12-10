@@ -516,25 +516,6 @@ void Translator::writeInternal(std::ostream& declOut, std::ostream& procOut){
                 std::abort();
             }
             addGlobalVariables(item.second);
-            // For cpigen, ensure declaration is emitted for free var (int/bool/bv).
-            if(options.cpigen){
-                // Avoid duplicate declarations.
-                std::string declProbe = "var " + std::string(item.second) + ":";
-                if(declaration.find(declProbe.c_str()) == nullptr){
-                    int sz = ltlTranslator->getSize(item.second);
-                    if(sz == -1){
-                        // default to bool if size unknown? infer from value: if value is "true"/"false" then bool else int
-                        auto itVal = freeValues.find(item.second);
-                        if(itVal != freeValues.end() && (itVal->second == "true" || itVal->second == "false")){
-                            addDeclaration("\nvar "+item.second+":bool;\n");
-                        } else {
-                            addDeclaration("\nvar "+item.second+":int;\n");
-                        }
-                    } else {
-                        addDeclaration("\nvar "+item.second+":int;\n");
-                    }
-                }
-            }
             // Add bv
             if(ltlTranslator->getSize(item.second) != -1){
                 if(options.bv2int)
@@ -545,16 +526,7 @@ void Translator::writeInternal(std::ostream& declOut, std::ostream& procOut){
             }
             auto itVal = freeValues.find(item.second);
             if(itVal != freeValues.end()){
-                if(options.cpigen){
-                    // 在 cpigen 模式下，将自由变量的随机值推入 havocProcedure 末尾，确保被 main() 前的调用生效。
-                    havocProcedure.addStatement("    "+item.second+" := "+itVal->second+";\n");
-                    havocProcedure.addModifiedGlobalVariables(item.second);
-                    if(options.bv2int && ltlTranslator->getSize(item.second) != -1){
-                        havocProcedure.addStatement("    assume(0 <= "+item.second+" && "+
-                            item.second + " < power_2_" +toString(ltlTranslator->getSize(item.second))
-                            +"() );\n");
-                    }
-                } else {
+                if(!options.cpigen){
                     mainProcedure.addFrontStatement("    "+item.second+" := "+itVal->second+";\n");
                     mainProcedure.addModifiedGlobalVariables(item.second);
                 }
@@ -587,18 +559,6 @@ void Translator::writeInternal(std::ostream& declOut, std::ostream& procOut){
         
         for(cstring declaration:ltlTranslator->getDeclarations()){
             addDeclaration(declaration);
-        }
-
-        // cpigen: emit free var values into havoc tail
-        if(options.cpigen){
-            auto freeValues = ltlTranslator->getFreeVariableValues();
-            for(auto item:ltlTranslator->getFreeVariables()){
-                auto itVal = freeValues.find(item.second);
-                if(itVal != freeValues.end()){
-                    havocProcedure.addStatement("    "+item.second+" := "+itVal->second+";\n");
-                    havocProcedure.addModifiedGlobalVariables(item.second);
-                }
-            }
         }
 
         for(auto item:p4ltlSpec){
@@ -679,6 +639,28 @@ void Translator::emitOutput(std::ostream& declOut, std::ostream& procOut){
     }
 }
 
+void Translator::addCpigenFreeVarToHavoc(const cstring& varName, int bitwidth,
+                                         const std::string& value){
+    std::string declProbe = "var " + std::string(varName) + ":";
+    if(declaration.find(declProbe.c_str()) == nullptr){
+        if(bitwidth == -1){
+            // 默认为 int；由调用侧决定是否是 bool
+            addDeclaration("\nvar "+varName+":int;\n");
+        } else {
+            addDeclaration("\nvar "+varName+":int;\n");
+            updateVariableSize(varName, bitwidth);
+        }
+        addGlobalVariables(varName);
+    }
+    // 将赋值写入 havocProcedure，保证 cpigen 主流程入口前生效
+    havocProcedure.addStatement("    "+varName+" := "+value+";\n");
+    havocProcedure.addModifiedGlobalVariables(varName);
+    if(options.bv2int && bitwidth != -1){
+        havocProcedure.addStatement("    assume(0 <= "+varName+" && "+varName+
+            " < power_2_"+toString(bitwidth)+"() );\n");
+    }
+}
+
 void Translator::writeToFile(){
     writeInternal(out, out);
 }
@@ -689,52 +671,6 @@ void Translator::writeToString(std::string &declOut, std::string &procsOut){
     writeInternal(declStream, procStream);
     declOut = declStream.str();
     procsOut = procStream.str();
-
-   
-    if(options.cpigen && ltlTranslator){
-        auto freeValues = ltlTranslator->getFreeVariableValues();
-        for(auto item : ltlTranslator->getFreeVariables()){
-            const std::string varName = item.second.c_str();
-            const int bw = ltlTranslator->getSize(item.second);
-            auto itVal = freeValues.find(item.second);
-            const std::string val = (itVal != freeValues.end()) ? itVal->second.c_str() : "0";
-            const bool isBool = (val == "true" || val == "false");
-            const std::string declProbe = "var " + varName + ":";
-            if (declOut.find(declProbe) == std::string::npos) {
-                if (bw == -1) {
-                    declOut.append("\nvar " + varName + ":" + (isBool ? "bool" : "int") + ";\n");
-                } else {
-                    declOut.append("\nvar " + varName + ":int;\n");
-                }
-                if (options.bv2int && bw != -1) {
-                    declOut.append("assume(0 <= " + varName + " && " + varName +
-                                   " < power_2_" + toString(bw) + "());\n");
-                }
-            }
-
-            const std::string havocSig = "procedure {:inline 1} havocProcedure()";
-            size_t procPos = procsOut.find(havocSig);
-            if (procPos != std::string::npos) {
-                size_t modPos = procsOut.find("modifies", procPos);
-                size_t semiPos = (modPos != std::string::npos) ? procsOut.find(';', modPos) : std::string::npos;
-                if (modPos != std::string::npos && semiPos != std::string::npos &&
-                    procsOut.find(varName, modPos) > semiPos) {
-                    procsOut.insert(semiPos, ", " + varName);
-                    semiPos += varName.size() + 2;
-                }
-                size_t bracePos = procsOut.find('{', procPos);
-                size_t insertPos = (bracePos != std::string::npos) ? procsOut.find('\n', bracePos) : std::string::npos;
-                if (insertPos != std::string::npos) {
-                    std::string stmt = "    " + varName + " := " + val + ";\n";
-                    if (options.bv2int && bw != -1) {
-                        stmt += "    assume(0 <= " + varName + " && " + varName +
-                                " < power_2_" + toString(bw) + "() );\n";
-                    }
-                    procsOut.insert(insertPos + 1, stmt);
-                }
-            }
-        }
-    }
 }
 
 cstring Translator::toString(int val){
@@ -3343,6 +3279,20 @@ void Translator::translate(const IR::P4Program *program){
     for(auto obj:program->objects){
         translate(obj);
     }
+
+    // cpigen：在主翻译流程中将自由变量声明/赋值注入 havocProcedure
+    if(options.cpigen && ltlTranslator){
+        auto freeValues = ltlTranslator->getFreeVariableValues();
+        for(auto item:ltlTranslator->getFreeVariables()){
+            auto itVal = freeValues.find(item.second);
+            if(itVal != freeValues.end()){
+                addCpigenFreeVarToHavoc(item.second,
+                                        ltlTranslator->getSize(item.second),
+                                        itVal->second.c_str());
+            }
+        }
+    }
+
     if(options.addForwardingAssertion){
         mainProcedure.addStatement("    assert(forward || drop);\n");
     }
