@@ -3,9 +3,12 @@
 
 #include <typeinfo>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <queue>
+#include <set>
 #include <string>
+#include <vector>
 #include "backends/verify/translate/p4ltl_utils.h"
 #include "ir/ir.h"
 #include "boogie_procedure.h"
@@ -47,6 +50,7 @@ private:
 	std::set<cstring> functions;
 	std::map<cstring, std::vector<cstring>> pred;
 	std::set<cstring> globalVariables;
+	std::set<cstring> registerVariables;
 	BoogieProcedure* currentProcedure=nullptr;
 	cstring deparser=nullptr;
 	// options
@@ -70,6 +74,8 @@ private:
 	std::map<cstring, std::vector<KEY_ACTION_COND>> CPI_SIMP;
 	typedef int CHOICE_TYPE;
 	std::map<cstring, std::map<cstring, CHOICE_TYPE>> choiceMap;
+	
+	std::function<void(const std::set<std::string>&)> mainModifiesCallback_;
 
 	// 输出帮助
 	void writeInternal(std::ostream& declOut, std::ostream& procOut);
@@ -78,6 +84,7 @@ private:
 	// cpigen 自由变量注入到声明与 havocProcedure
 	void addCpigenFreeVarToHavoc(const cstring& varName, int bitwidth,
 	                             const std::string& value);
+	void syncProcedureModifiesToBoogie() const;
 
 public:
 	Translator() = delete;
@@ -85,6 +92,8 @@ public:
 	P4LTLTranslator* ltlTranslator;
 	void writeToFile();
 	void writeToString(std::string &declOut, std::string &procsOut);
+	void setMainModifiesCallback(
+	    std::function<void(const std::set<std::string>&)> callback);
 	
 	cstring toString();
 	cstring toString(int val);
