@@ -226,6 +226,22 @@ void Translator::addFunction(cstring funcName, cstring func) {
     }
 }
 
+void Translator::addUninterpretedFunction(cstring funcName,
+                                          const std::vector<cstring> &paramTypes,
+                                          cstring returnType) {
+  if (functions.find(funcName) != functions.end())
+    return;
+  functions.insert(funcName);
+  cstring declarationStr = "\nfunction " + funcName + "(";
+  for (int i = 0; i < static_cast<int>(paramTypes.size()); i++) {
+    declarationStr += "arg" + toString(i) + ":" + paramTypes[i];
+    if (i + 1 < static_cast<int>(paramTypes.size()))
+      declarationStr += ", ";
+  }
+  declarationStr += ") returns(" + returnType + ");\n";
+  addDeclaration(declarationStr);
+}
+
 void Translator::analyzeProgram(const IR::P4Program *program) {
   for (auto obj : program->objects) {
         if (auto typeHeader = obj->to<IR::Type_Header>()) {
@@ -4274,6 +4290,8 @@ void Translator::translate(const IR::P4Table *p4Table) {
     incIndent();
     // Consider keys
     // Keys are not changed and this is only for key access validity checking
+  std::vector<cstring> keyParamTypes;
+  std::vector<cstring> keyArgNames;
   int keyIndex = 0;
   for (auto property : p4Table->properties->properties) {
             if (auto key = property->value->to<IR::Key>()) {
@@ -4291,19 +4309,35 @@ void Translator::translate(const IR::P4Table *p4Table) {
         addGlobalVariables(helperName);
         table.addModifiedGlobalVariables(helperName);
         table.addStatement(getIndent() + helperName + " := " + expr + ";\n");
+        keyParamTypes.push_back(keyType);
+        keyArgNames.push_back(helperName);
         keyIndex++;
                 }
             }
         }
+  cstring cpiHitFunc = name + ".cpi.hit";
+  addUninterpretedFunction(cpiHitFunc, keyParamTypes, "bool");
+  cstring keyArgs = "";
+  for (int i = 0; i < static_cast<int>(keyArgNames.size()); i++) {
+    keyArgs += keyArgNames[i];
+    if (i + 1 < static_cast<int>(keyArgNames.size()))
+      keyArgs += ", ";
+  }
+  cstring hitCall = cpiHitFunc + "(" + keyArgs + ")";
+  cstring cpiActionFunc = name + ".cpi.action";
+  addUninterpretedFunction(cpiActionFunc, keyParamTypes, "int");
+  cstring actionCall = cpiActionFunc + "(" + keyArgs + ")";
   cstring actionIndexName = name + ".action_index";
   addDeclaration("var " + actionIndexName + ":int;\n");
   addGlobalVariables(actionIndexName);
   table.addModifiedGlobalVariables(actionIndexName);
   addGlobalVariables(name + ".hit");
   table.addModifiedGlobalVariables(name + ".hit");
-  table.addStatement(getIndent() + name + ".hit := false;\n");
+  addDeclaration("var " + name + ".hit : bool;\n");
+  table.addStatement(getIndent() + name + ".hit := " + hitCall + ";\n");
   std::map<cstring, std::vector<cstring>> actionParameterGlobals;
   std::vector<cstring> actionOrder;
+  std::map<cstring, std::vector<std::pair<cstring, cstring>>> actionParameterFuncs;
 
   cstring defaultActionName;
   for (auto property : p4Table->properties->properties) {
@@ -4326,9 +4360,13 @@ void Translator::translate(const IR::P4Table *p4Table) {
             const IR::P4Action *action = actions[actionName];
             int paramIndex = 0;
             auto &paramGlobals = actionParameterGlobals[actionName];
+            std::vector<cstring> actionParamNames;
+            std::vector<cstring> actionParamTypes;
+            std::vector<cstring> actionParamSimpleNames;
             for (auto parameter : action->parameters->parameters) {
               cstring baseName =
                   name + "." + actionName + ".para" + toString(paramIndex);
+              cstring simpleName = translate(parameter->name);
               if (options.bitBlasting &&
                   parameter->type->to<IR::Type_Bits>()) {
                                 auto typeBits = parameter->type->to<IR::Type_Bits>();
@@ -4340,6 +4378,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 table.addModifiedGlobalVariables(connect(parameterName, i));
                             }
                 paramGlobals.push_back(parameterName);
+                actionParamNames.push_back(parameterName);
               } else {
                 cstring parameterDecl =
                     baseName + "." + translate(parameter);
@@ -4351,9 +4390,26 @@ void Translator::translate(const IR::P4Table *p4Table) {
                                 addGlobalVariables(parameterName);
                 table.addModifiedGlobalVariables(parameterName);
                 paramGlobals.push_back(parameterName);
+                actionParamNames.push_back(parameterName);
                                 }
+            actionParamTypes.push_back(translate(parameter->type));
+            actionParamSimpleNames.push_back(simpleName);
               paramIndex++;
-                        }
+            }
+            getChoice(name, actionName);
+            if (std::find(actionOrder.begin(), actionOrder.end(), actionName) ==
+                actionOrder.end()) {
+              actionOrder.push_back(actionName);
+            }
+            for (int idx = 0; idx < static_cast<int>(actionParamNames.size()); idx++) {
+              cstring paramFuncName =
+                  name + ".cpi." + actionName + "." +
+                  actionParamSimpleNames[idx] + ".value";
+              addUninterpretedFunction(paramFuncName, keyParamTypes,
+                                       actionParamTypes[idx]);
+              actionParameterFuncs[actionName].push_back(
+                  {actionParamNames[idx], paramFuncName});
+            }
             getChoice(name, actionName);
             if (std::find(actionOrder.begin(), actionOrder.end(), actionName) ==
                 actionOrder.end()) {
@@ -4376,25 +4432,25 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 }
             }
 
+  bool hasDefaultBranch = defaultActionName != nullptr;
+  if (hasDefaultBranch) {
+    table.addStatement(getIndent() + "if(!" + name + ".hit){\n");
+    incIndent();
+    table.addStatement(getIndent() + actionIndexName +
+                       " := " + std::to_string(choiceMap[name].size()) + ";\n");
+    table.addStatement(getIndent() + "call " + defaultActionName + ";\n");
+    table.addStatement(getIndent() + "return;\n");
+    decIndent();
+    table.addStatement(getIndent() + "}\n");
+    table.addSucc(defaultActionName);
+    addPred(defaultActionName, tableName);
+  }
+  table.addStatement(getIndent() + actionIndexName + " := " + actionCall + ";\n");
+  table.addStatement(getIndent() + "assume(" + actionIndexName + " >= 0 && " +
+                     actionIndexName + " <= " +
+                     std::to_string(choiceMap[name].size()) + ");\n");
 
-    table.addStatement(getIndent() + "assume(" + actionIndexName + " >= 0 && " +
-                       actionIndexName + " <= " +
-                       std::to_string(choiceMap[name].size()) + ");\n");
-    addDeclaration("var " + name + ".hit : bool;\n");
-    bool hasDefaultBranch = defaultActionName != nullptr;
-    if (hasDefaultBranch) {
-      table.addStatement(getIndent() + "if(!" + name + ".hit){\n");
-      incIndent();
-      table.addStatement(getIndent() + actionIndexName + " := " +
-                         std::to_string(choiceMap[name].size()) + ";\n");
-      table.addStatement(getIndent() + "call " + defaultActionName + ";\n");
-      decIndent();
-      table.addStatement(getIndent() + "}\n");
-      table.addSucc(defaultActionName);
-      addPred(defaultActionName, tableName);
-    }
-
-    bool previousBranchExists = hasDefaultBranch;
+  bool previousBranchExists = false;
     if (!actionOrder.empty()) {
       for (auto actionName : actionOrder) {
         const IR::P4Action *action = actions[actionName];
@@ -4405,6 +4461,11 @@ void Translator::translate(const IR::P4Table *p4Table) {
                            " == " + std::to_string(choiceIdx) + "){\n");
         previousBranchExists = true;
         incIndent();
+        auto &paramFuncList = actionParameterFuncs[actionName];
+        for (auto &paramFunc : paramFuncList) {
+          cstring call = paramFunc.second + "(" + keyArgs + ")";
+          table.addStatement(getIndent() + paramFunc.first + " := " + call + ";\n");
+        }
         table.addStatement(getIndent() + "call " + actionName + "(");
         table.addSucc(actionName);
         addPred(actionName, tableName);

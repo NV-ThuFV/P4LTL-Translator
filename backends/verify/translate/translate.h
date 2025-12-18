@@ -109,6 +109,7 @@ public:
 	bool hasDeclaration(cstring decl);
 	void addFunction(cstring op, cstring opbuiltin, cstring typeName, cstring returnType);
 	void addFunction(cstring funcName, cstring func);
+	void addUninterpretedFunction(cstring funcName, const std::vector<cstring> &paramTypes, cstring returnType);
 	void analyzeProgram(const IR::P4Program *program);
 	cstring translate(IR::ID id);
 	void incIndent();
