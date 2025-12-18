@@ -68,6 +68,7 @@ private:
 	std::map<cstring, int> sizes; // 0 means bool
 
 	std::map<cstring, std::vector<P4LTL::AstNode*>> p4ltlSpec;
+	std::set<cstring> oldExpressions;
 
 	std::map<cstring, std::vector<cstring>> CPI;
 	typedef std::pair<cstring, cstring> KEY_ACTION_COND;
@@ -85,6 +86,7 @@ private:
 	void addCpigenFreeVarToHavoc(const cstring& varName, int bitwidth,
 	                             const std::string& value);
 	void syncProcedureModifiesToBoogie() const;
+	bool hasOldExpression(cstring fieldName) const;
 
 public:
 	Translator() = delete;
@@ -142,6 +144,7 @@ public:
 	void setCPISIMP(cstring table, cstring keyCond, cstring actionCond);
 	cstring getCPIAssumption(cstring table);
 	void collectCPI();
+	void addOldExpressions(const std::map<cstring, std::set<cstring>> &exprs);
 	cstring translateCPI();
 
 	CHOICE_TYPE getChoice(cstring table, cstring action); 

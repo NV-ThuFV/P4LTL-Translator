@@ -358,6 +358,28 @@ cstring Translator::getCPIAssumption(cstring table) {
     return CPIResult;
 }
 
+void Translator::addOldExpressions(const std::map<cstring, std::set<cstring>> &exprs) {
+  for (const auto &item : exprs) {
+    for (const cstring &expr : item.second)
+      oldExpressions.insert(expr);
+  }
+}
+
+bool Translator::hasOldExpression(cstring fieldName) const {
+  if (!oldExpressions.empty())
+    return oldExpressions.find(fieldName) != oldExpressions.end();
+  if (!options.p4ltlSpec)
+    return false;
+  for (const auto &item : p4ltlSpec) {
+    for (const auto &spec : item.second) {
+      std::set<cstring> oldExprs = ltlTranslator->getOldExprs(spec);
+      if (oldExprs.find(fieldName) != oldExprs.end())
+        return true;
+    }
+  }
+  return false;
+}
+
 void Translator::collectCPI() {
   for (auto spec : p4ltlSpec[P4LTL_KEYS_CPI_SPEC]) {
         // Check table
@@ -531,23 +553,25 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
 
     for (cstring str : P4LTL_KEYS) {
       if (options.CpiIfElse && str == P4LTL_KEYS_CPI_MODEL)
-                continue;
-            // update CPI_SPEC
+        continue;
+      // update CPI_SPEC
       if (str == P4LTL_KEYS_CPI_SPEC || str == P4LTL_KEYS_CPI_MODEL)
-                continue;
+        continue;
+      if (str == P4LTL_KEYS_SPEC)
+        continue;
       if (p4ltlSpec.find(str) != p4ltlSpec.end()) {
         for (auto spec : p4ltlSpec[str]) {
-                    cstring cont = ltlTranslator->translateP4LTL(spec);
-                    std::cout << str << std::endl << " " << cont << std::endl;
+          cstring cont = ltlTranslator->translateP4LTL(spec);
+          std::cout << str << std::endl << " " << cont << std::endl;
           if (str == P4LTL_KEYS_CPI_SPEC)
             procOut << P4LTL_KEYS_CPI;
           else
             procOut << str;
-                    procOut << " " << cont << "\n";
-                }
-            }
+          procOut << " " << cont << "\n";
         }
-        procOut << "\n";
+      }
+    }
+    procOut << "\n";
 
         auto freeValues = ltlTranslator->getFreeVariableValues();
     for (auto item : ltlTranslator->getFreeVariables()) {
@@ -642,7 +666,7 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
   if (options.cpigen || options.whileLoop) {
         addProcedure(havocProcedure);
     }
-  if (options.whileLoop && options.ultimateAutomizer) {
+  if (!oldExpressions.empty()) {
         addProcedure(oldProcedure);
     }
         
@@ -3515,6 +3539,12 @@ void Translator::translate(const IR::Declaration_Instance *instance,
             main.addSucc(havocProcedure.getName());
             // addPred(havocProcedure.getName(), name);
             addPred(havocProcedure.getName(), main.getName());
+      if (!oldExpressions.empty()) {
+        main.addStatement(getIndent() + "call " + oldProcedure.getName() +
+                          "();\n");
+        main.addSucc(oldProcedure.getName());
+        addPred(oldProcedure.getName(), main.getName());
+      }
         }
 
         int cnt = instance->arguments->size();
@@ -3570,12 +3600,25 @@ void Translator::translate(const IR::Declaration_Instance *instance,
       // Place havoc at the very beginning of the instance entry (often named
       // 'main').
             main.addFrontStatement("    call havocProcedure();\n");
+      if (!oldExpressions.empty()) {
+        cstring callOld =
+            "    call " + oldProcedure.getName() + "();\n";
+        main.insertStatement(1, callOld);
+        main.addSucc(oldProcedure.getName());
+        addPred(oldProcedure.getName(), main.getName());
+      }
         }
 
     if (options.whileLoop) {
       main.addStatement(getIndent() + "call havocProcedure();\n");
             main.addSucc(havocProcedure.getName());
             addPred(havocProcedure.getName(), main.getName());
+      if (!oldExpressions.empty()) {
+        main.addStatement(getIndent() + "call " + oldProcedure.getName() +
+                          "();\n");
+        main.addSucc(oldProcedure.getName());
+        addPred(oldProcedure.getName(), main.getName());
+      }
             addProcedure(main);
             mainProcedure.addStatement("    while(true){\n");
       mainProcedure.addStatement("        call " + name + "();\n");
@@ -3813,24 +3856,15 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
         }
 
         // add old Proc
-    if (options.p4ltlSpec) {
-            cstring oldFieldName = oldPrefix + fieldName;
-      for (auto item : p4ltlSpec) {
-        if (hasDeclaration(oldFieldName))
-                    break;
-        for (auto spec : item.second) {
-                    std::set<cstring> oldExprs = ltlTranslator->getOldExprs(spec);
-          if (oldExprs.find(fieldName) != oldExprs.end()) {
-            addDeclaration("var " + oldFieldName + ": int;\n");
-                        addGlobalVariables(oldFieldName);
-            oldProcedure.addStatement("    " + oldFieldName +
-                                      " := " + fieldName + ";\n");
-                        oldProcedure.addModifiedGlobalVariables(oldFieldName);
-                        break;
-                    }
-                }
-            }
-        }
+    if (options.p4ltlSpec && hasOldExpression(fieldName)) {
+      cstring oldFieldName = oldPrefix + fieldName;
+      if (!hasDeclaration(oldFieldName)) {
+        addDeclaration("var " + oldFieldName + ": int;\n");
+        addGlobalVariables(oldFieldName);
+      }
+      oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName + ";\n");
+      oldProcedure.addModifiedGlobalVariables(oldFieldName);
+    }
   } else if (field->type->node_type_name() == "Type_Bits") {
         auto typeBits = field->type->to<IR::Type_Bits>();
         updateMaxBitvectorSize(typeBits);
@@ -3883,24 +3917,15 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
         }
 
         // add old Proc
-    if (options.p4ltlSpec) {
-            cstring oldFieldName = oldPrefix + fieldName;
-      for (auto item : p4ltlSpec) {
-        if (hasDeclaration(oldFieldName))
-                    break;
-        for (auto spec : item.second) {
-                    std::set<cstring> oldExprs = ltlTranslator->getOldExprs(spec);
-          if (oldExprs.find(fieldName) != oldExprs.end()) {
-            addDeclaration("var " + oldFieldName + ": int;\n");
-                        addGlobalVariables(oldFieldName);
-            oldProcedure.addStatement("    " + oldFieldName +
-                                      " := " + fieldName + ";\n");
-                        oldProcedure.addModifiedGlobalVariables(oldFieldName);
-                        break;
-                    }
-                }
-            }
-        }
+    if (options.p4ltlSpec && hasOldExpression(fieldName)) {
+      cstring oldFieldName = oldPrefix + fieldName;
+      if (!hasDeclaration(oldFieldName)) {
+        addDeclaration("var " + oldFieldName + ": int;\n");
+        addGlobalVariables(oldFieldName);
+      }
+      oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName + ";\n");
+      oldProcedure.addModifiedGlobalVariables(oldFieldName);
+    }
   } else if (field->type->node_type_name() == "Type_Varbits") {
         auto typeVarbits = field->type->to<IR::Type_Varbits>();
     cstring fieldName = arg + "." + field->name;
@@ -3982,16 +4007,8 @@ void Translator::translate(const IR::Type_Header *typeHeader, cstring arg) {
         cstring fieldName = arg + "." + field->name;
         // cstring oldPrefix = "_old_";
     cstring oldFieldName = oldPrefix + fieldName;
-    if (options.p4ltlSpec) {
-      for (auto item : p4ltlSpec) {
-        for (auto spec : item.second) {
-                    std::set<cstring> oldExprs = ltlTranslator->getOldExprs(spec);
-          if (oldExprs.find(fieldName) != oldExprs.end()) {
-            translate(field, oldPrefix + arg);
-                        break;
-                    }
-                }
-            }
+    if (options.p4ltlSpec && hasOldExpression(fieldName)) {
+      translate(field, oldPrefix + arg);
     } else {
             // translate(field, oldPrefix+arg);
         }
@@ -4022,24 +4039,14 @@ void Translator::translate(const IR::Type_Header *typeHeader, cstring arg) {
                 havocProcedure.addModifiedGlobalVariables(fieldName);
             }
 
-      if (options.p4ltlSpec) {
-        for (auto item : p4ltlSpec) {
-          for (auto spec : item.second) {
-                        std::set<cstring> oldExprs = ltlTranslator->getOldExprs(spec);
-            if (oldExprs.find(fieldName) != oldExprs.end()) {
-                            // change to old Procedure
-              oldProcedure.addStatement("    " + oldFieldName +
-                                        " := " + fieldName + ";\n");
-                            oldProcedure.addModifiedGlobalVariables(oldFieldName);
-                            break;
-                        }
-                    }
-                }
+      if (options.p4ltlSpec && hasOldExpression(fieldName)) {
+        oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName +
+                                  ";\n");
+        oldProcedure.addModifiedGlobalVariables(oldFieldName);
       } else {
-                // havocProcedure.addStatement("    "+oldFieldName+" := "+
-                //    fieldName +";\n");
-                // havocProcedure.addModifiedGlobalVariables(oldFieldName);
-            }
+        // havocProcedure.addStatement("    "+oldFieldName+" := "+ fieldName +";\n");
+        // havocProcedure.addModifiedGlobalVariables(oldFieldName);
+      }
         }
     }
 }
