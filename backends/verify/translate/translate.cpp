@@ -553,25 +553,25 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
 
     for (cstring str : P4LTL_KEYS) {
       if (options.CpiIfElse && str == P4LTL_KEYS_CPI_MODEL)
-        continue;
-      // update CPI_SPEC
+                continue;
+            // update CPI_SPEC
       if (str == P4LTL_KEYS_CPI_SPEC || str == P4LTL_KEYS_CPI_MODEL)
         continue;
       if (str == P4LTL_KEYS_SPEC)
-        continue;
+                continue;
       if (p4ltlSpec.find(str) != p4ltlSpec.end()) {
         for (auto spec : p4ltlSpec[str]) {
-          cstring cont = ltlTranslator->translateP4LTL(spec);
-          std::cout << str << std::endl << " " << cont << std::endl;
+                    cstring cont = ltlTranslator->translateP4LTL(spec);
+                    std::cout << str << std::endl << " " << cont << std::endl;
           if (str == P4LTL_KEYS_CPI_SPEC)
             procOut << P4LTL_KEYS_CPI;
           else
             procOut << str;
-          procOut << " " << cont << "\n";
+                    procOut << " " << cont << "\n";
+                }
+            }
         }
-      }
-    }
-    procOut << "\n";
+        procOut << "\n";
 
         auto freeValues = ltlTranslator->getFreeVariableValues();
     for (auto item : ltlTranslator->getFreeVariables()) {
@@ -3857,14 +3857,14 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
 
         // add old Proc
     if (options.p4ltlSpec && hasOldExpression(fieldName)) {
-      cstring oldFieldName = oldPrefix + fieldName;
+            cstring oldFieldName = oldPrefix + fieldName;
       if (!hasDeclaration(oldFieldName)) {
-        addDeclaration("var " + oldFieldName + ": int;\n");
-        addGlobalVariables(oldFieldName);
+            addDeclaration("var " + oldFieldName + ": int;\n");
+                        addGlobalVariables(oldFieldName);
       }
       oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName + ";\n");
-      oldProcedure.addModifiedGlobalVariables(oldFieldName);
-    }
+                        oldProcedure.addModifiedGlobalVariables(oldFieldName);
+        }
   } else if (field->type->node_type_name() == "Type_Bits") {
         auto typeBits = field->type->to<IR::Type_Bits>();
         updateMaxBitvectorSize(typeBits);
@@ -3918,14 +3918,14 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
 
         // add old Proc
     if (options.p4ltlSpec && hasOldExpression(fieldName)) {
-      cstring oldFieldName = oldPrefix + fieldName;
+            cstring oldFieldName = oldPrefix + fieldName;
       if (!hasDeclaration(oldFieldName)) {
-        addDeclaration("var " + oldFieldName + ": int;\n");
-        addGlobalVariables(oldFieldName);
+            addDeclaration("var " + oldFieldName + ": int;\n");
+                        addGlobalVariables(oldFieldName);
       }
       oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName + ";\n");
-      oldProcedure.addModifiedGlobalVariables(oldFieldName);
-    }
+                        oldProcedure.addModifiedGlobalVariables(oldFieldName);
+        }
   } else if (field->type->node_type_name() == "Type_Varbits") {
         auto typeVarbits = field->type->to<IR::Type_Varbits>();
     cstring fieldName = arg + "." + field->name;
@@ -4008,7 +4008,7 @@ void Translator::translate(const IR::Type_Header *typeHeader, cstring arg) {
         // cstring oldPrefix = "_old_";
     cstring oldFieldName = oldPrefix + fieldName;
     if (options.p4ltlSpec && hasOldExpression(fieldName)) {
-      translate(field, oldPrefix + arg);
+            translate(field, oldPrefix + arg);
     } else {
             // translate(field, oldPrefix+arg);
         }
@@ -4042,11 +4042,11 @@ void Translator::translate(const IR::Type_Header *typeHeader, cstring arg) {
       if (options.p4ltlSpec && hasOldExpression(fieldName)) {
         oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName +
                                   ";\n");
-        oldProcedure.addModifiedGlobalVariables(oldFieldName);
+                            oldProcedure.addModifiedGlobalVariables(oldFieldName);
       } else {
         // havocProcedure.addStatement("    "+oldFieldName+" := "+ fieldName +";\n");
-        // havocProcedure.addModifiedGlobalVariables(oldFieldName);
-      }
+                // havocProcedure.addModifiedGlobalVariables(oldFieldName);
+            }
         }
     }
 }
@@ -4402,7 +4402,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
             actionParamTypes.push_back(translate(parameter->type));
             actionParamSimpleNames.push_back(simpleName);
               paramIndex++;
-            }
+                        }
             getChoice(name, actionName);
             if (std::find(actionOrder.begin(), actionOrder.end(), actionName) ==
                 actionOrder.end()) {
@@ -4461,7 +4461,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
     if (!actionOrder.empty()) {
       for (auto actionName : actionOrder) {
         const IR::P4Action *action = actions[actionName];
-        int choiceIdx = getChoice(name, actionName) - 1;
+              int choiceIdx = getChoice(name, actionName) - 1;
         cstring branchKeyword =
             previousBranchExists ? "else if" : "if";
         table.addStatement(getIndent() + branchKeyword + "(" + actionIndexName +
@@ -4473,45 +4473,45 @@ void Translator::translate(const IR::P4Table *p4Table) {
           cstring call = paramFunc.second + "(" + keyArgs + ")";
           table.addStatement(getIndent() + paramFunc.first + " := " + call + ";\n");
         }
-        table.addStatement(getIndent() + "call " + actionName + "(");
-        table.addSucc(actionName);
-        addPred(actionName, tableName);
-        int cnt2 = action->parameters->parameters.size();
-        int paramIndex = 0;
+              table.addStatement(getIndent() + "call " + actionName + "(");
+                            table.addSucc(actionName);
+                            addPred(actionName, tableName);
+                            int cnt2 = action->parameters->parameters.size();
+              int paramIndex = 0;
         const auto &paramGlobals = actionParameterGlobals[actionName];
-        for (auto parameter : action->parameters->parameters) {
-          cnt2--;
-          if (options.ultimateAutomizer && options.bitBlasting &&
-              parameter->type->to<IR::Type_Bits>()) {
-            auto typeBits = parameter->type->to<IR::Type_Bits>();
-            cstring stmt = "";
-            for (int i = 0; i < typeBits->size; i++) {
-              cstring baseName =
-                  name + "." + actionName + ".para" + toString(paramIndex) +
-                  "." + translate(parameter->name);
-              stmt += connect(baseName, i);
-              if (i < typeBits->size - 1)
-                stmt += ", ";
-            }
-            table.addStatement(stmt);
-          } else {
-            cstring parameterName = paramGlobals[paramIndex];
-            table.addStatement(parameterName);
-          }
-          if (cnt2 != 0)
-            table.addStatement(", ");
-          paramIndex++;
-        }
-        table.addStatement(");\n");
-        decIndent();
-        table.addStatement(getIndent() + "}\n");
-      }
-      if (defaultActionName != nullptr) {
+              for (auto parameter : action->parameters->parameters) {
+                                cnt2--;
+                if (options.ultimateAutomizer && options.bitBlasting &&
+                    parameter->type->to<IR::Type_Bits>()) {
+                                    auto typeBits = parameter->type->to<IR::Type_Bits>();
+                                    cstring stmt = "";
+                  for (int i = 0; i < typeBits->size; i++) {
+                    cstring baseName =
+                        name + "." + actionName + ".para" + toString(paramIndex) +
+                        "." + translate(parameter->name);
+                    stmt += connect(baseName, i);
+                    if (i < typeBits->size - 1)
+                      stmt += ", ";
+                                    }
+                                    table.addStatement(stmt);
+                } else {
+                  cstring parameterName = paramGlobals[paramIndex];
+                                    table.addStatement(parameterName);
+                                }
+                if (cnt2 != 0)
+                                    table.addStatement(", ");
+                paramIndex++;
+                            }
+                            table.addStatement(");\n");
+                                decIndent();
+              table.addStatement(getIndent() + "}\n");
+                        }
+    if (defaultActionName != nullptr) {
         table.addStatement(getIndent() + "else{\n");
-        incIndent();
-        table.addStatement(getIndent() + "call " + defaultActionName + ";\n");
-        table.addSucc(defaultActionName);
-        addPred(defaultActionName, tableName);
+            incIndent();
+      table.addStatement(getIndent() + "call " + defaultActionName + ";\n");
+      table.addSucc(defaultActionName);
+      addPred(defaultActionName, tableName);
         decIndent();
         table.addStatement(getIndent() + "}\n");
       }
