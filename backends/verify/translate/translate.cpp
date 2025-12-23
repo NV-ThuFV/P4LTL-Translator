@@ -53,7 +53,7 @@ Translator::Translator(std::ostream &out, P4VerifyOptions &options,
 
     // declare necessary types and files
     declaration = cstring("type Ref;\n");
-  if (options.ultimateAutomizer && options.bv2int)
+  if ( options.bv2int)
         declaration += cstring("type error=int;\n");
     else
         declaration += cstring("type error=bv1;\n");
@@ -330,13 +330,13 @@ void Translator::setP4LTLSpec(cstring key, P4LTL::AstNode *root) {
     p4ltlSpec[key].push_back(root);
 }
 
-void Translator::setP4LTLFreeVars(cstring decl) {
-    ltlTranslator->createFreeVariables(decl);
+void Translator::setAtomBoogieCallback(
+    std::function<void(const std::string&, const std::string&)> callback) {
+    atomBoogieCallback = std::move(callback);
 }
 
-void Translator::setP4LTLFreeVarValue(cstring name, cstring type,
-                                      cstring value) {
-    ltlTranslator->addFreeVariableWithValue(name, type, value);
+void Translator::setP4LTLFreeVars(cstring decl) {
+    ltlTranslator->createFreeVariables(decl);
 }
 
 // CPI related
@@ -557,8 +557,12 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
             // update CPI_SPEC
       if (str == P4LTL_KEYS_CPI_SPEC || str == P4LTL_KEYS_CPI_MODEL)
         continue;
-      if (str == P4LTL_KEYS_SPEC)
+      if (str == P4LTL_KEYS_SPEC) {
+                for (auto spec : p4ltlSpec[str]) {
+                    ltlTranslator->translateP4LTL(spec);
+                }
                 continue;
+            }
       if (p4ltlSpec.find(str) != p4ltlSpec.end()) {
         for (auto spec : p4ltlSpec[str]) {
                     cstring cont = ltlTranslator->translateP4LTL(spec);
@@ -573,7 +577,6 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
         }
         procOut << "\n";
 
-        auto freeValues = ltlTranslator->getFreeVariableValues();
     for (auto item : ltlTranslator->getFreeVariables()) {
       if (isGlobalVariable(item.first)) {
         std::cerr << "ERROR: " + item.first +
@@ -590,14 +593,6 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
               "() );\n");
         // std::couts << item.second << " " <<
         // ltlTranslator->getSize(item.second) << std::endl;
-            }
-            auto itVal = freeValues.find(item.second);
-      if (itVal != freeValues.end()) {
-        if (!options.cpigen) {
-          mainProcedure.addFrontStatement("    " + item.second +
-                                          " := " + itVal->second + ";\n");
-                    mainProcedure.addModifiedGlobalVariables(item.second);
-                }
             }
         }
     for (cstring variable : ltlTranslator->getVariables()) {
@@ -736,28 +731,6 @@ void Translator::emitOutput(std::ostream &declOut, std::ostream &procOut) {
     }
 }
 
-void Translator::addCpigenFreeVarToHavoc(const cstring &varName, int bitwidth,
-                                         const std::string &value) {
-    std::string declProbe = "var " + std::string(varName) + ":";
-  if (declaration.find(declProbe.c_str()) == nullptr) {
-    if (bitwidth == -1) {
-
-      addDeclaration("\nvar " + varName + ":int;\n");
-        } else {
-      addDeclaration("\nvar " + varName + ":int;\n");
-            updateVariableSize(varName, bitwidth);
-        }
-        addGlobalVariables(varName);
-    }
-  havocProcedure.addStatement("    " + varName + " := " + value + ";\n");
-    havocProcedure.addModifiedGlobalVariables(varName);
-  if (options.bv2int && bitwidth != -1) {
-    havocProcedure.addStatement("    assume(0 <= " + varName + " && " +
-                                varName + " < power_2_" + toString(bitwidth) +
-                                "() );\n");
-    }
-}
-
 void Translator::writeToFile() { writeInternal(out, out); }
 
 void Translator::writeToString(std::string &declOut, std::string &procsOut) {
@@ -878,7 +851,7 @@ Translator::translate(const IR::AssignmentStatement *assignmentStatement) {
             ss2 << translate(slice->e2);
             ss2 >> r;
             l++;
-      if (options.ultimateAutomizer && options.bv2int) {
+      if ( options.bv2int) {
                 // P4: left[e1:e2] = right
                 // Boogie: left = left[size:e1+1]++right++left[e2:0]
                 // UA: left = (left - left % power_2_e1+1()) + right * power_2_e2() 
@@ -1475,7 +1448,7 @@ Translator::translate(const IR::MethodCallExpression *methodCallExpression) {
         // cstring arg3 = translate((*methodCallExpression->arguments)[3]);
         cstring arg4 = translate((*methodCallExpression->arguments)[4]);
 
-    if (options.ultimateAutomizer && options.bv2int) {
+    if ( options.bv2int) {
             // eg: bsge.bv8(left:int, right:int) : bool{left >= right}
       cstring funcName = "bsge." + typeName;
       cstring function = "function {:inline true} " + funcName +
@@ -1692,7 +1665,7 @@ cstring Translator::translate(const IR::Declaration_Variable *declVar) {
     addGlobalVariables(translate(declVar->name));
     
   if (auto typeBits = declVar->type->to<IR::Type_Bits>()) {
-    if (options.ultimateAutomizer && options.bv2int) {
+    if ( options.bv2int) {
       addDeclaration("var " + translate(declVar->name) + ":int;\n");
             updateVariableSize(translate(declVar->name), typeBits->size);
     } else
@@ -1985,7 +1958,7 @@ cstring Translator::translate(const IR::SelectExpression *selectExpression,
                 int cnt2 = 0;
         for (auto expr : selectExpression->select->components) {
           if (auto constant = selectCase->keyset->to<IR::Constant>()) {
-            if (options.ultimateAutomizer && options.bitBlasting &&
+            if (options.bitBlasting &&
                 expr->type->to<IR::Type_Bits>()) {
                             auto typeBits = expr->type->to<IR::Type_Bits>();
                             int size = typeBits->size;
@@ -1996,7 +1969,7 @@ cstring Translator::translate(const IR::SelectExpression *selectExpression,
                 if (i < size - 1)
                   condition += " && ";
                             }
-            } else if (options.ultimateAutomizer && options.bv2int &&
+            } else if ( options.bv2int &&
                        constant->type->to<IR::Type_Bits>()) {
                             condition += translate(expr);
                             condition += " == ";
@@ -2154,7 +2127,7 @@ cstring Translator::translate(const IR::Argument *argument) {
 cstring Translator::translate(const IR::Constant *constant) {
     std::stringstream ss;
     ss << constant->value;
-  if (options.ultimateAutomizer && options.bv2int) {
+  if ( options.bv2int) {
     if (auto typeBits = constant->type->to<IR::Type_Bits>())
       return ss.str();
     }
@@ -2200,12 +2173,12 @@ cstring Translator::translate(const IR::Cast *cast) {
 
     if (srcSize != -1) {
       if (dstSize < srcSize) {
-        if (options.ultimateAutomizer && options.bv2int)
+        if ( options.bv2int)
           return "(" + expr + "\%" + "power_2_" + toString(dstSize) + "())";
                 else
           return expr + "[" + std::to_string(dstSize) + ":0]";
       } else if (dstSize > srcSize) {
-        if (options.ultimateAutomizer && options.bv2int)
+        if ( options.bv2int)
                     return expr;
                 else
           return "0bv" + std::to_string(dstSize - srcSize) + "++" + expr;
@@ -2227,7 +2200,7 @@ cstring Translator::translate(const IR::Slice *slice) {
     //     int end = atoi(translate(slice->e2));
     //     return res;
     // }
-  if (options.ultimateAutomizer && options.bv2int) {
+  if ( options.bv2int) {
         cstring res = "";
         cstring expr = translate(slice->e0);
         int start = atoi(translate(slice->e1));
@@ -2263,7 +2236,7 @@ cstring Translator::translate(const IR::Mask *mask) {
             cstring returnType = translate(typeBits);
       cstring functionName = "band." + returnType;
 
-      if (options.ultimateAutomizer && options.bv2int) {
+      if ( options.bv2int) {
                 cstring powerFunc = "";
         cstring function = "function {:inline true} " + functionName +
                            "(left:int, right:int) : int{\n";
@@ -2378,10 +2351,28 @@ cstring Translator::translate(const IR::Type_Stack *typeStack, cstring arg) {
     }
     return "";
 }
+ 
+cstring Translator::translateTypeForBv2Int(const IR::Type *type) {
+  if (options.bv2int) {
+    if (type == nullptr)
+      return "";
+    if (auto typeBits = type->to<IR::Type_Bits>()) {
+      return "int";
+    }
+  }
+  return translate(type);
+}
+
+int Translator::getTypeBitWidth(const IR::Type *type) const {
+  if (auto typeBits = type->to<IR::Type_Bits>()) {
+    return typeBits->size;
+  }
+  return -1;
+}
 
 cstring Translator::translate(const IR::Type_Typedef *typeTypedef) {
     cstring name = translate(typeTypedef->name);
-  if (options.ultimateAutomizer && options.bv2int) {
+  if ( options.bv2int) {
     if (auto typeBits = typeTypedef->type->to<IR::Type_Bits>()) {
             typeDefs[name] = typeBits->size;
       addDeclaration("type " + name + " = int;\n");
@@ -3297,7 +3288,7 @@ cstring Translator::translate(const IR::Operation_Binary *opBinary) {
         return bitBlasting(opBinary);
     }
 
-  if (options.ultimateAutomizer && options.bv2int) {
+  if ( options.bv2int) {
         return translateUA(opBinary);
     }
 
@@ -3425,7 +3416,7 @@ cstring Translator::translate(const IR::Operation_Unary *opUnary) {
         return translate(lnot);
   } else if (auto cmpl = opUnary->to<IR::Cmpl>()) {
     if (auto typeBits = opUnary->type->to<IR::Type_Bits>()) {
-      if (options.ultimateAutomizer && options.bv2int) {
+      if ( options.bv2int) {
                 cstring returnType = translate(opUnary->type);
                 cstring powerFunc = "";
         cstring funcName = "bnot." + returnType;
@@ -3482,18 +3473,6 @@ void Translator::translate(const IR::P4Program *program) {
     }
 
     // cpigen：在主翻译流程中将自由变量声明/赋值注入 havocProcedure
-  if (options.cpigen && ltlTranslator) {
-        auto freeValues = ltlTranslator->getFreeVariableValues();
-    for (auto item : ltlTranslator->getFreeVariables()) {
-            auto itVal = freeValues.find(item.second);
-      if (itVal != freeValues.end()) {
-                addCpigenFreeVarToHavoc(item.second,
-                                        ltlTranslator->getSize(item.second),
-                                        itVal->second.c_str());
-            }
-        }
-    }
-
   if (options.addForwardingAssertion) {
         mainProcedure.addStatement("    assert(forward || drop);\n");
     }
@@ -3645,7 +3624,7 @@ void Translator::translate(const IR::Declaration_Instance *instance,
         auto valueType = instance->type->to<IR::Type_Specialized>();
         cstring valueTypeName = translate((*valueType->arguments)[0]);
 
-    if (options.ultimateAutomizer && options.bv2int &&
+    if ( options.bv2int &&
         (*valueType->arguments)[0]->to<IR::Type_Bits>()) {
             valueTypeName = "int";
         }
@@ -3657,13 +3636,13 @@ void Translator::translate(const IR::Declaration_Instance *instance,
     if ((*valueType->arguments).size() > 1) {
             sizeTypeName = translate((*valueType->arguments)[1]);
     } else {
-      if (options.ultimateAutomizer && options.bv2int)
+      if ( options.bv2int)
                 sizeTypeName = "int";
             else
                 sizeTypeName = "bv32";
         }
 
-    if (options.ultimateAutomizer && options.bv2int)
+    if ( options.bv2int)
             sizeTypeName = "int";
         else
             sizeTypeName = "bv32";
@@ -3873,7 +3852,7 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
       return;
     if (options.bitBlasting) {
             bitBlastingTempDecl(fieldName, typeBits->size);
-    } else if (options.ultimateAutomizer && options.bv2int) {
+    } else if ( options.bv2int) {
       addDeclaration("var " + fieldName + ":int;\n");
     } else
       addDeclaration("var " + fieldName + ":bv" +
@@ -3935,7 +3914,7 @@ void Translator::translate(const IR::StructField *field, cstring arg) {
       return;
     if (options.bitBlasting) {
             bitBlastingTempDecl(fieldName, typeVarbits->size);
-    } else if (options.ultimateAutomizer && options.bv2int) {
+    } else if (options.bv2int) {
       addDeclaration("var " + fieldName + ":int;\n");
     } else
       addDeclaration("var " + fieldName + ":bv" +
@@ -4299,6 +4278,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
     // Keys are not changed and this is only for key access validity checking
   std::vector<cstring> keyParamTypes;
   std::vector<cstring> keyArgNames;
+  std::vector<int> keyParamWidths;
   int keyIndex = 0;
   for (auto property : p4Table->properties->properties) {
             if (auto key = property->value->to<IR::Key>()) {
@@ -4306,7 +4286,8 @@ void Translator::translate(const IR::P4Table *p4Table) {
                     cstring expr = translate(keyElement->expression);
         if (expr == nullptr)
                             continue;
-        cstring keyType = translate(keyElement->expression->type);
+        cstring keyType =
+            translateTypeForBv2Int(keyElement->expression->type);
         cstring keyIndexStr = toString(keyIndex);
         cstring helperName = name + ".key" + keyIndexStr + "." + expr;
         std::string declProbe = "var " + std::string(helperName) + ":";
@@ -4316,8 +4297,15 @@ void Translator::translate(const IR::P4Table *p4Table) {
         addGlobalVariables(helperName);
         table.addModifiedGlobalVariables(helperName);
         table.addStatement(getIndent() + helperName + " := " + expr + ";\n");
+        int keyWidth = getTypeBitWidth(keyElement->expression->type);
+        if (options.bv2int && keyWidth != -1) {
+          table.addStatement(
+              getIndent() + "assume(0 <= " + helperName + " && " + helperName +
+              " < power_2_" + toString(keyWidth) + "() );\n");
+        }
         keyParamTypes.push_back(keyType);
         keyArgNames.push_back(helperName);
+        keyParamWidths.push_back(keyWidth);
         keyIndex++;
                 }
             }
@@ -4345,6 +4333,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
   std::map<cstring, std::vector<cstring>> actionParameterGlobals;
   std::vector<cstring> actionOrder;
   std::map<cstring, std::vector<std::pair<cstring, cstring>>> actionParameterFuncs;
+  std::map<cstring, std::vector<int>> actionParamWidths;
 
   cstring defaultActionName;
   for (auto property : p4Table->properties->properties) {
@@ -4370,10 +4359,12 @@ void Translator::translate(const IR::P4Table *p4Table) {
             std::vector<cstring> actionParamNames;
             std::vector<cstring> actionParamTypes;
             std::vector<cstring> actionParamSimpleNames;
+            std::vector<int> actionParamWidthsLocal;
             for (auto parameter : action->parameters->parameters) {
               cstring baseName =
                   name + "." + actionName + ".para" + toString(paramIndex);
               cstring simpleName = translate(parameter->name);
+              int paramWidth = getTypeBitWidth(parameter->type);
               if (options.bitBlasting &&
                   parameter->type->to<IR::Type_Bits>()) {
                                 auto typeBits = parameter->type->to<IR::Type_Bits>();
@@ -4386,9 +4377,14 @@ void Translator::translate(const IR::P4Table *p4Table) {
                             }
                 paramGlobals.push_back(parameterName);
                 actionParamNames.push_back(parameterName);
+                actionParamWidthsLocal.push_back(paramWidth);
               } else {
+                cstring parameterType =
+                    translateTypeForBv2Int(parameter->type);
+                if (options.bv2int && paramWidth != -1)
+                  parameterType = "int";
                 cstring parameterDecl =
-                    baseName + "." + translate(parameter);
+                    baseName + "." + parameterType;
                 cstring parameterName =
                     baseName + "." + translate(parameter->name);
                 // table.addFrontStatement("    var
@@ -4398,11 +4394,14 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 table.addModifiedGlobalVariables(parameterName);
                 paramGlobals.push_back(parameterName);
                 actionParamNames.push_back(parameterName);
+                actionParamWidthsLocal.push_back(paramWidth);
                                 }
-            actionParamTypes.push_back(translate(parameter->type));
+            actionParamTypes.push_back(
+                translateTypeForBv2Int(parameter->type));
             actionParamSimpleNames.push_back(simpleName);
               paramIndex++;
                         }
+            actionParamWidths[actionName] = actionParamWidthsLocal;
             getChoice(name, actionName);
             if (std::find(actionOrder.begin(), actionOrder.end(), actionName) ==
                 actionOrder.end()) {
@@ -4469,9 +4468,20 @@ void Translator::translate(const IR::P4Table *p4Table) {
         previousBranchExists = true;
         incIndent();
         auto &paramFuncList = actionParameterFuncs[actionName];
+        auto &paramWidths = actionParamWidths[actionName];
+        int paramFuncIdx = 0;
         for (auto &paramFunc : paramFuncList) {
           cstring call = paramFunc.second + "(" + keyArgs + ")";
           table.addStatement(getIndent() + paramFunc.first + " := " + call + ";\n");
+          int width = -1;
+          if (options.bv2int && paramFuncIdx < static_cast<int>(paramWidths.size()))
+            width = paramWidths[paramFuncIdx];
+          if (options.bv2int && width != -1) {
+            table.addStatement(getIndent() + "assume(0 <= " + paramFunc.first +
+                               " && " + paramFunc.first + " < power_2_" +
+                               toString(width) + "() );\n");
+          }
+          paramFuncIdx++;
         }
               table.addStatement(getIndent() + "call " + actionName + "(");
                             table.addSucc(actionName);
@@ -4481,7 +4491,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
         const auto &paramGlobals = actionParameterGlobals[actionName];
               for (auto parameter : action->parameters->parameters) {
                                 cnt2--;
-                if (options.ultimateAutomizer && options.bitBlasting &&
+                if ( options.bitBlasting &&
                     parameter->type->to<IR::Type_Bits>()) {
                                     auto typeBits = parameter->type->to<IR::Type_Bits>();
                                     cstring stmt = "";
@@ -4608,7 +4618,7 @@ cstring Translator::translate(const IR::Parameter *parameter, cstring arg) {
     if (auto typeBits = parameter->type->to<IR::Type_Bits>()) {
             updateMaxBitvectorSize(typeBits);
             currentProcedure->parameters[name] = typeBits->size;
-      if (options.ultimateAutomizer && options.bitBlasting) {
+      if ( options.bitBlasting) {
                 cstring res = "";
         for (int i = 0; i < typeBits->size; i++) {
           res += connect(name, i) + ":bool";
@@ -4624,7 +4634,7 @@ cstring Translator::translate(const IR::Parameter *parameter, cstring arg) {
             }
         }
     }
-  if (options.ultimateAutomizer && options.bv2int &&
+  if ( options.bv2int &&
       parameter->type->to<IR::Type_Bits>())
         type = "int";
   return name + ":" + type;

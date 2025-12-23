@@ -106,7 +106,6 @@ class P4LTLTranslator{
 	std::vector<cstring> declarations;
 	std::map<cstring, cstring> freeVars;
 	std::map<cstring, int> sizes;
-	std::map<cstring, cstring> freeVarValues;
 
 	std::map<cstring, cstring> cache;
 
@@ -146,7 +145,6 @@ public:
 
 	std::map<cstring, cstring> getFreeVariables();
 	void addFreeVariable(cstring variable);
-	void addFreeVariableWithValue(cstring name, cstring type, cstring value);
 	void createFreeVariables(cstring decl);
 	bool isFreeVariable(cstring variable);
 	

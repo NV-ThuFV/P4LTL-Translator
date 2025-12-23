@@ -1,5 +1,8 @@
 #include "p4ltl_utils.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
 #include <stdexcept>
 
 // bool isAPNode(P4LTL::AstNode* node){
@@ -208,7 +211,13 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::UOpNode* node){
 }
 
 cstring P4LTLTranslator::translateP4LTL(P4LTL::P4LTLAtomicProposition* node){
-	return "AP("+translateP4LTL(node->getProposition())+")";
+  const std::string expr = "AP("+translateP4LTL(node->getProposition())+")";
+  if(p4Translator && p4Translator->atomBoogieCallback){
+    if(auto proposition = node->getProposition()){
+      p4Translator->atomBoogieCallback(proposition->toString(), expr);
+    }
+  }
+  return cstring(expr);
 }
 
 cstring P4LTLTranslator::translateP4LTL(P4LTL::Predicate* node){
@@ -323,25 +332,6 @@ void P4LTLTranslator::addFreeVariable(cstring variable){
 	}
 }
 
-void P4LTLTranslator::addFreeVariableWithValue(cstring name, cstring type, cstring value){
-	if(type != "bool" && type != "int" && !isBvType(type)){
-		std::cout << "ERROR: Unsupported type \""<< type << "\"" << std::endl; 
-		std::abort();
-	}
-	freeVars[name] = "_p4ltl_free_"+name;
-	if(isBvType(type)){
-		int length = getBvLength(type);
-		sizes["_p4ltl_free_"+name] = length;
-		addDeclaration("\nvar "+freeVars[name]+":int;\n");
-		addDeclaration("assume(0 <= "+freeVars[name]+" && "+freeVars[name]+" < power_2_"+Util::toString(length)+"());\n");
-	} else if (type == "int") {
-		addDeclaration("\nvar "+freeVars[name]+":int;\n");
-	} else { // bool
-		addDeclaration("\nvar "+freeVars[name]+":bool;\n");
-	}
-	freeVarValues[freeVars[name]] = value;
-}
-
 void P4LTLTranslator::createFreeVariables(cstring decl){
 	std::string str = decl.c_str();
 	str.erase(std::remove_if(str.begin(), str.end(), [](char c) {
@@ -358,10 +348,6 @@ void P4LTLTranslator::createFreeVariables(cstring decl){
 	if(start < str.length()){
 		addFreeVariable(str.substr(start));
 	}
-}
-
-std::map<cstring, cstring> P4LTLTranslator::getFreeVariableValues(){
-	return freeVarValues;
 }
 
 /*

@@ -21,6 +21,7 @@
 class P4LTLTranslator;
 class CPIRule;
 
+class P4LTLSpec;
 class Translator{
 private:
 	BoogieProcedure mainProcedure;
@@ -82,9 +83,6 @@ private:
 	void writeInternal(std::ostream& declOut, std::ostream& procOut);
 	void emitOutput(std::ostream& declOut, std::ostream& procOut);
 
-	// cpigen 自由变量注入到声明与 havocProcedure
-	void addCpigenFreeVarToHavoc(const cstring& varName, int bitwidth,
-	                             const std::string& value);
 	void syncProcedureModifiesToBoogie() const;
 	bool hasOldExpression(cstring fieldName) const;
 
@@ -92,6 +90,7 @@ public:
 	Translator() = delete;
 	Translator(std::ostream &out, P4VerifyOptions &options, BMV2CmdsAnalyzer* bMV2CmdsAnalyzer = nullptr);
 	P4LTLTranslator* ltlTranslator;
+	std::function<void(const std::string&, const std::string&)> atomBoogieCallback;
 	void writeToFile();
 	void writeToString(std::string &declOut, std::string &procsOut);
 	void setMainModifiesCallback(
@@ -137,8 +136,9 @@ public:
 
 	// P4LTL Specification
 	void setP4LTLSpec(cstring key, P4LTL::AstNode* root);
+	void setAtomBoogieCallback(
+	    std::function<void(const std::string&, const std::string&)> callback);
 	void setP4LTLFreeVars(cstring decl);
-	void setP4LTLFreeVarValue(cstring name, cstring type, cstring value);
 
 	void setCPI(cstring table, cstring assumeCond);
 	void setCPISIMP(cstring table, cstring keyCond, cstring actionCond);
@@ -221,6 +221,9 @@ public:
 	// Operation (also Expression)
 	cstring translate(const IR::Operation_Binary *opBinary);
 	cstring translate(const IR::Operation_Unary *opUnary);
+
+  cstring translateTypeForBv2Int(const IR::Type *type);
+  int getTypeBitWidth(const IR::Type *type) const;
 
 	void translate(const IR::P4Program *program);
 	void translate(const IR::Type_Error *typeError);
