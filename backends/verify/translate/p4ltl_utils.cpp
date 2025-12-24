@@ -159,7 +159,7 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::BinOpNode* node){
 		if(alreadyDeclared(expr)){
 			return getCacheVariable(expr);
 		}
-
+		int derivedBitwidth = -1;
 		cstring variable = TempVariable::getPrefix("_p4ltl_");
 		addVariable(variable);
 
@@ -180,6 +180,7 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::BinOpNode* node){
 			}
 			else{
 				sizes[variable] = sizeLeft;
+				derivedBitwidth = sizeLeft;
 				cstring size = p4Translator->toString(static_cast<int>(sizeLeft));
 				cstring powerFunc = "power_2_"+size+"()";
             	cstring funcName = "";
@@ -194,6 +195,13 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::BinOpNode* node){
 		}
 		else{
 			addStatement(variable+" := "+left+binTermOp->getOp()+right+";\n");
+		}
+		if(p4Translator && p4Translator->tempVarCallback){
+			std::string exprKey = expr.c_str();
+			exprKey.erase(std::remove_if(exprKey.begin(), exprKey.end(),
+				[](char c){ return std::isspace(static_cast<unsigned char>(c)); }), exprKey.end());
+			std::string varName = variable.c_str();
+			p4Translator->tempVarCallback(exprKey, varName, derivedBitwidth);
 		}
 		return variable;
 	}
@@ -225,7 +233,9 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::Predicate* node){
 		return drop->toString();
 	}
 	else if(auto forward = dynamic_cast<P4LTL::Forward*>(node)){
-		return forward->toString();
+		// Translate fwd(port) to Boogie predicate on forward flag and egress port.
+		cstring port = translateP4LTL(forward->getPort());
+		return "(forward == true && standard_metadata.egress_port == "+port+")";
 	}
 	else if(auto valid = dynamic_cast<P4LTL::Valid*>(node)){
 		return valid->getHeader()+".valid == true";

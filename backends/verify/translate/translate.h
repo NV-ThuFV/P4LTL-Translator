@@ -91,6 +91,7 @@ public:
 	Translator(std::ostream &out, P4VerifyOptions &options, BMV2CmdsAnalyzer* bMV2CmdsAnalyzer = nullptr);
 	P4LTLTranslator* ltlTranslator;
 	std::function<void(const std::string&, const std::string&)> atomBoogieCallback;
+	std::function<void(const std::string&, const std::string&, int)> tempVarCallback;
 	void writeToFile();
 	void writeToString(std::string &declOut, std::string &procsOut);
 	void setMainModifiesCallback(
@@ -138,6 +139,8 @@ public:
 	void setP4LTLSpec(cstring key, P4LTL::AstNode* root);
 	void setAtomBoogieCallback(
 	    std::function<void(const std::string&, const std::string&)> callback);
+	void setTempVarCallback(
+	    std::function<void(const std::string&, const std::string&, int)> callback);
 	void setP4LTLFreeVars(cstring decl);
 
 	void setCPI(cstring table, cstring assumeCond);

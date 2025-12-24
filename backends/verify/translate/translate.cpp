@@ -335,6 +335,11 @@ void Translator::setAtomBoogieCallback(
     atomBoogieCallback = std::move(callback);
 }
 
+void Translator::setTempVarCallback(
+    std::function<void(const std::string&, const std::string&, int)> callback) {
+    tempVarCallback = std::move(callback);
+}
+
 void Translator::setP4LTLFreeVars(cstring decl) {
     ltlTranslator->createFreeVariables(decl);
 }
