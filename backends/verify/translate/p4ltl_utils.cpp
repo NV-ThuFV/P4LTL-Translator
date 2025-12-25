@@ -187,8 +187,8 @@ cstring P4LTLTranslator::translateP4LTL(P4LTL::BinOpNode* node){
             	if(binTermOp->getOp() == " + ") funcName = "add.bv"+size;
             	else if(binTermOp->getOp() == " - ") funcName = "sub.bv"+size;
             	else if(binTermOp->getOp() == " * ") funcName = "mul.bv"+size;
-            	cstring function = "function {:inline true} "+funcName+"(left:int, right:int) : int{("+
-                	"(left\%"+powerFunc+")+(right\%"+powerFunc+"))\%"+powerFunc+"}\n";
+            cstring function = "function {:inline true} "+funcName+"(left:int, right:int) : int{("+
+                "(left mod "+powerFunc+")+(right mod "+powerFunc+")) mod "+powerFunc+"}\n";
             	p4Translator->addFunction(funcName, function);
             	addStatement(variable+" := "+funcName+"("+left+", "+right+");\n");
 			}

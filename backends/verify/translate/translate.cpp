@@ -184,6 +184,12 @@ void Translator::addProcedure(BoogieProcedure procedure) {
   if (procedures.find(procedure.getName()) != procedures.end())
         return;
     // procedures.push_back(&procedure);
+    
+    if (procedure.getName() == "main") {
+        for (auto &gv : globalVariables) {
+            procedure.addModifiedGlobalVariables(gv);
+        }
+    }
     procedures[procedure.getName()] = procedure;
 }
 
@@ -285,6 +291,11 @@ cstring Translator::getSwitchStatementCount() {
 
 void Translator::addGlobalVariables(cstring variable) {
     globalVariables.insert(variable);
+    // 确保入口过程的 modifies 覆盖所有全局变量，避免后续调用缺少权限
+    mainProcedure.addModifiedGlobalVariables(variable);
+    if (procedures.find("main") != procedures.end()) {
+        procedures["main"].addModifiedGlobalVariables(variable);
+    }
 }
 
 bool Translator::isGlobalVariable(cstring variable) {
@@ -517,18 +528,18 @@ void Translator::addUAFunctions() {
     }
 
   declaration += "function {:inline true} band(left:int, right:int) : "
-                 "int{((left+right)-(left+right)\%2)/2}\n";
+                 "int{((left+right)-((left+right) mod 2)) div 2}\n";
   // declaration += "function band(left:int, right:int) : int{if(left>0 &&
   // right>0) then 1 else 0}\n";
   declaration += "function {:inline true} bxor(left:int, right:int) : "
-                 "int{(left+right)\%2}\n";
+                 "int{(left+right) mod 2}\n";
   // declaration += "function bxor(left:int, right:int) :
   // int{if((left==0&&right>0) || (left>0&&right==0)) then 1 else 0}\n";
   declaration += "function {:inline true} bor(left:int, right:int) : "
-                 "int{(left+right)\%2+((left+right)-((left+right)\%2))/2}\n";
+                 "int{(left+right) mod 2+((left+right)-((left+right) mod 2)) div 2}\n";
   // declaration += "function bor(left:int, right:int) : int{if(left>0 ||
   // right>0) then 1 else 0}\n";
-    declaration += "function {:inline true} bnot(num:int) : int{1-num\%2}\n";
+    declaration += "function {:inline true} bnot(num:int) : int{1-num mod 2}\n";
   // declaration += "function bnot(num:int) : int{if(num == 0) then 1 else
   // 0}\n";
 }
@@ -861,9 +872,9 @@ Translator::translate(const IR::AssignmentStatement *assignmentStatement) {
                 // Boogie: left = left[size:e1+1]++right++left[e2:0]
                 // UA: left = (left - left % power_2_e1+1()) + right * power_2_e2() 
                 //            + left % power_2_e2()
-        res += left + "-" + left + "\%power_2_" + toString(l) + "() + " +
+        res += left + "-" + left + " mod power_2_" + toString(l) + "() + " +
                translate(assignmentStatement->right) + " * power_2_" +
-               toString(r) + "() + " + left + " \% power_2_" + toString(r) +
+               toString(r) + "() + " + left + " mod power_2_" + toString(r) +
                "()";
                 // if(l == size) left - left % power_2_l() == 0
                 // if(r == 0) left % power_2_0() == 0
@@ -2014,7 +2025,7 @@ cstring Translator::translate(const IR::SelectExpression *selectExpression,
                     break;
                                 }                                
                 if (flag) {
-                  condition += translate(expr) + "%" + maskRight + " == ";
+                  condition += translate(expr) + " mod " + maskRight + " == ";
                 } else {
                   condition += functionName + "(" + translate(expr) + ", " +
                                maskRight + ") == ";
@@ -2063,7 +2074,7 @@ cstring Translator::translate(const IR::SelectExpression *selectExpression,
                       break;
                                     }                                
                   if (flag) {
-                    condition += translate(expr) + "%" + maskRight + " == ";
+                    condition += translate(expr) + " mod " + maskRight + " == ";
                   } else {
                     condition += functionName + "(" + translate(expr) + ", " +
                                  maskRight + ") == ";
@@ -2179,7 +2190,7 @@ cstring Translator::translate(const IR::Cast *cast) {
     if (srcSize != -1) {
       if (dstSize < srcSize) {
         if ( options.bv2int)
-          return "(" + expr + "\%" + "power_2_" + toString(dstSize) + "())";
+          return "(" + expr + " mod power_2_" + toString(dstSize) + "())";
                 else
           return expr + "[" + std::to_string(dstSize) + ":0]";
       } else if (dstSize > srcSize) {
@@ -2212,8 +2223,8 @@ cstring Translator::translate(const IR::Slice *slice) {
         int end = atoi(translate(slice->e2));
         // eg: n[3:0] = n2_n1_n0
         //            = ( (n-n%power_2_0())/power_2_0() %(power_2_3()) )
-    res = "( (" + expr + "-" + expr + "\%power_2_" + toString(end) +
-          "())/power_2_" + toString(end) + "()" + "\%(power_2_" +
+    res = "( (" + expr + "-" + expr + " mod power_2_" + toString(end) +
+          "()) div power_2_" + toString(end) + "() mod (power_2_" +
           toString(start + 1 - end) + "()) )";
         return res;
     }
@@ -2251,9 +2262,9 @@ cstring Translator::translate(const IR::Mask *mask) {
                     
                     // eg: band( ((left-left%power_2_0())/power_2_0())%2, 
                     //           ((right-right%power_2_0())/power_2_0())%2 ) * power_2_0()
-          function += "    band( ((left-left\%" + powerFunc + ")/" + powerFunc +
-                      ")\%2, " + "((right-right\%" + powerFunc + ")/" +
-                      powerFunc + ")\%2 ) * " + powerFunc;
+          function += "    band( ((left-left mod " + powerFunc + ")/" + powerFunc +
+                      ") mod 2, " + "((right-right mod " + powerFunc + ")/" +
+                      powerFunc + ") mod 2 ) * " + powerFunc;
                     
           if (i < typeBits->size - 1)
                         function += " +";
@@ -3008,7 +3019,7 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
 
         function = "function {:inline true} " + funcName + "(num:int) : ";
                 // function += "int {(num*"+powerFunc+")\%"+powerFunc+"}\n";
-        function += "int {(num*" + powerFunc + ")\%" + sizeFunc + "}\n";
+        function += "int {(num*" + powerFunc + ") mod " + sizeFunc + "}\n";
                 
                 addFunction(funcName, function);
 
@@ -3056,7 +3067,7 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
             // shl_function += "int
             // {(num*"+shl_powerFunc+")\%"+shl_powerFunc+"}\n";
             shl_function +=
-                "int {(num*" + shl_powerFunc + ")\%" + sizeFunc + "}\n";
+                "int {(num*" + shl_powerFunc + ") mod " + sizeFunc + "}\n";
                         addFunction(shl_funcName, shl_function);
                     }
           function =
@@ -3086,7 +3097,7 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
         cstring funcName = "shr." + typeName + "_" + right;
 
         function = "function {:inline true} " + funcName + "(num:int) : ";
-        function += "int {(num-num\%" + powerFunc + ")/" + powerFunc + "}\n";
+        function += "int {(num-num mod " + powerFunc + ") div " + powerFunc + "}\n";
                 
                 addFunction(funcName, function);
                 
@@ -3099,8 +3110,8 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
       cstring funcName = "mul." + typeName;
             
       function = "function {:inline true} " + funcName +
-                 "(left:int, right:int) : int{(" + "(left\%" + powerFunc +
-                 ")*(right\%" + powerFunc + "))\%" + powerFunc + "}\n";
+                 "(left:int, right:int) : int{(" + "(left mod " + powerFunc +
+                 ")*(right mod " + powerFunc + ")) mod " + powerFunc + "}\n";
             
             addFunction(funcName, function);
             
@@ -3112,8 +3123,8 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
       cstring funcName = "add." + typeName;
 
       function = "function {:inline true} " + funcName +
-                 "(left:int, right:int) : int{(" + "(left\%" + powerFunc +
-                 ")+(right\%" + powerFunc + "))\%" + powerFunc + "}\n";
+                 "(left:int, right:int) : int{(" + "(left mod " + powerFunc +
+                 ")+(right mod " + powerFunc + ")) mod " + powerFunc + "}\n";
             
             addFunction(funcName, function);
             
@@ -3125,8 +3136,8 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
       cstring funcName = "add." + typeName;
 
       function = "function {:inline true} " + funcName +
-                 "(left:int, right:int) : int{(" + "(left\%" + powerFunc +
-                 ")+(right\%" + powerFunc + "))\%" + powerFunc + "}\n";
+                 "(left:int, right:int) : int{(" + "(left mod " + powerFunc +
+                 ")+(right mod " + powerFunc + ")) mod " + powerFunc + "}\n";
             
             addFunction(funcName, function);
             
@@ -3138,9 +3149,9 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
       cstring funcName = "sub." + typeName;
 
       function = "function {:inline true} " + funcName +
-                 "(left:int, right:int) : int{(" + powerFunc + " + (left\%" +
-                 powerFunc + ") - (right\%" + powerFunc + "))\%" + powerFunc +
-                 "}\n";
+                 "(left:int, right:int) : int{(" + powerFunc + " + (left mod " +
+                 powerFunc + ") - (right mod " + powerFunc + ")) mod " +
+                 powerFunc + "}\n";
             
             addFunction(funcName, function);
 
@@ -3152,9 +3163,9 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
       cstring funcName = "sub." + typeName;
 
       function = "function {:inline true} " + funcName +
-                 "(left:int, right:int) : int{(" + powerFunc + " + (left\%" +
-                 powerFunc + ") - (right\%" + powerFunc + "))\%" + powerFunc +
-                 "}\n";
+                 "(left:int, right:int) : int{(" + powerFunc + " + (left mod " +
+                 powerFunc + ") - (right mod " + powerFunc + ")) mod " +
+                 powerFunc + "}\n";
             
             addFunction(funcName, function);
 
@@ -3171,9 +3182,9 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
                 
                 // eg: band( ((left-left%power_2_0())/power_2_0())%2, 
                 //           ((right-right%power_2_0())/power_2_0())%2 ) * power_2_0()
-        function += "    band( ((left-left\%" + powerFunc + ")/" + powerFunc +
-                    ")\%2, " + "((right-right\%" + powerFunc + ")/" +
-                    powerFunc + ")\%2 ) * " + powerFunc;
+        function += "    band( ((left-left mod " + powerFunc + ") div " + powerFunc +
+                    ") mod 2, " + "((right-right mod " + powerFunc + ") div " +
+                    powerFunc + ") mod 2 ) * " + powerFunc;
                 
         if (i < size - 1)
                     function += " +";
@@ -3196,9 +3207,9 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
 
                 // eg: bor( ((left-left%power_2_0())/power_2_0())%2, 
                 //          ((right-right%power_2_0())/power_2_0())%2 ) * power_2_0()
-        function += "    bor( ((left-left\%" + powerFunc + ")/" + powerFunc +
-                    ")\%2, " + "((right-right\%" + powerFunc + ")/" +
-                    powerFunc + ")\%2 ) * " + powerFunc;
+        function += "    bor( ((left-left mod " + powerFunc + ") div " + powerFunc +
+                    ") mod 2, " + "((right-right mod " + powerFunc + ") div " +
+                    powerFunc + ") mod 2 ) * " + powerFunc;
                 
         if (i < size - 1)
                     function += " +";
@@ -3221,9 +3232,9 @@ cstring Translator::translateUA(const IR::Operation_Binary *opBinary) {
 
                 // eg: bor( ((left-left%power_2_0())/power_2_0())%2, 
                 //          ((right-right%power_2_0())/power_2_0())%2 ) * power_2_0()
-        function += "    bxor( ((left-left\%" + powerFunc + ")/" + powerFunc +
-                    ")\%2, " + "((right-right\%" + powerFunc + ")/" +
-                    powerFunc + ")\%2 ) * " + powerFunc;
+        function += "    bxor( ((left-left mod " + powerFunc + ") div " + powerFunc +
+                    ") mod 2, " + "((right-right mod " + powerFunc + ") div " +
+                    powerFunc + ") mod 2 ) * " + powerFunc;
                 
         if (i < size - 1)
                     function += " +";
@@ -3433,8 +3444,8 @@ cstring Translator::translate(const IR::Operation_Unary *opUnary) {
           powerFunc = "power_2_" + toString(i) + "()";
                     
                     // eg: bnot( ((num-num%power_2_0())/power_2_0())%2 ) * power_2_0()
-          function += "    bnot( ((num-num\%" + powerFunc + ")/" + powerFunc +
-                      ")\%2 ) * " + powerFunc;
+          function += "    bnot( ((num-num mod " + powerFunc + ") div " + powerFunc +
+                      ") mod 2 ) * " + powerFunc;
                     
           if (i < size - 1)
                         function += " +";
@@ -4295,12 +4306,11 @@ void Translator::translate(const IR::P4Table *p4Table) {
             translateTypeForBv2Int(keyElement->expression->type);
         cstring keyIndexStr = toString(keyIndex);
         cstring helperName = name + ".key" + keyIndexStr + "." + expr;
-        std::string declProbe = "var " + std::string(helperName) + ":";
-        if (!hasDeclaration(declProbe.c_str())) {
-          addDeclaration("var " + helperName + ":" + keyType + ";\n");
-                        }
-        addGlobalVariables(helperName);
-        table.addModifiedGlobalVariables(helperName);
+        if (!table.hasLocalVariables(helperName)) {
+          table.addLocalVariables(helperName);
+          table.addVariableDeclaration(getIndent() + "var " + helperName + ":" +
+                                       keyType + ";\n");
+        }
         table.addStatement(getIndent() + helperName + " := " + expr + ";\n");
         int keyWidth = getTypeBitWidth(keyElement->expression->type);
         if (options.bv2int && keyWidth != -1) {
@@ -4315,6 +4325,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 }
             }
         }
+/*
   cstring cpiHitFunc = name + ".cpi.hit";
   addUninterpretedFunction(cpiHitFunc, keyParamTypes, "bool");
   cstring keyArgs = "";
@@ -4324,17 +4335,22 @@ void Translator::translate(const IR::P4Table *p4Table) {
       keyArgs += ", ";
   }
   cstring hitCall = cpiHitFunc + "(" + keyArgs + ")";
+*/
   cstring cpiActionFunc = name + ".cpi.action";
   addUninterpretedFunction(cpiActionFunc, keyParamTypes, "int");
+  cstring keyArgs = "";
+  for (int i = 0; i < static_cast<int>(keyArgNames.size()); i++) {
+    keyArgs += keyArgNames[i];
+    if (i + 1 < static_cast<int>(keyArgNames.size()))
+      keyArgs += ", ";
+  }
   cstring actionCall = cpiActionFunc + "(" + keyArgs + ")";
   cstring actionIndexName = name + ".action_index";
-  addDeclaration("var " + actionIndexName + ":int;\n");
-  addGlobalVariables(actionIndexName);
-  table.addModifiedGlobalVariables(actionIndexName);
-  addGlobalVariables(name + ".hit");
-  table.addModifiedGlobalVariables(name + ".hit");
-  addDeclaration("var " + name + ".hit : bool;\n");
-  table.addStatement(getIndent() + name + ".hit := " + hitCall + ";\n");
+  if (!table.hasLocalVariables(actionIndexName)) {
+    table.addLocalVariables(actionIndexName);
+    table.addVariableDeclaration(getIndent() + "var " + actionIndexName +
+                                 ":int;\n");
+  }
   std::map<cstring, std::vector<cstring>> actionParameterGlobals;
   std::vector<cstring> actionOrder;
   std::map<cstring, std::vector<std::pair<cstring, cstring>>> actionParameterFuncs;
@@ -4376,9 +4392,12 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 cstring parameterName =
                     baseName + "." + translate(parameter->name);
                 for (int i = 0; i < typeBits->size; i++) {
-                table.addFrontStatement(
-                    "    var " + connect(parameterName, i) + ":bool;\n");
-                table.addModifiedGlobalVariables(connect(parameterName, i));
+                if (!table.hasLocalVariables(connect(parameterName, i))) {
+                  table.addLocalVariables(connect(parameterName, i));
+                  table.addVariableDeclaration(
+                      getIndent() + "var " + connect(parameterName, i) +
+                      ":bool;\n");
+                }
                             }
                 paramGlobals.push_back(parameterName);
                 actionParamNames.push_back(parameterName);
@@ -4388,15 +4407,17 @@ void Translator::translate(const IR::P4Table *p4Table) {
                     translateTypeForBv2Int(parameter->type);
                 if (options.bv2int && paramWidth != -1)
                   parameterType = "int";
-                cstring parameterDecl =
-                    baseName + "." + parameterType;
                 cstring parameterName =
                     baseName + "." + translate(parameter->name);
+                cstring parameterDecl =
+                    parameterName + ":" + parameterType;
                 // table.addFrontStatement("    var
                 // "+actionName+"."+translate(parameter)+";\n");
-                addDeclaration("var " + parameterDecl + ";\n");
-                                addGlobalVariables(parameterName);
-                table.addModifiedGlobalVariables(parameterName);
+                if (!table.hasLocalVariables(parameterName)) {
+                  table.addLocalVariables(parameterName);
+                  table.addVariableDeclaration(getIndent() + "var " +
+                                               parameterDecl + ";\n");
+                }
                 paramGlobals.push_back(parameterName);
                 actionParamNames.push_back(parameterName);
                 actionParamWidthsLocal.push_back(paramWidth);
@@ -4432,6 +4453,17 @@ void Translator::translate(const IR::P4Table *p4Table) {
                     // add action declaration
           translate(actionList, name + ".action");
         
+    for (size_t actionIdx = 0; actionIdx < actionOrder.size(); ++actionIdx) {
+      const cstring actionName = actionOrder[actionIdx];
+      const int actionIndexValue =
+          static_cast<int>(getChoice(name, actionName)) - 1;
+      cstring actionConst =
+          name + ".action" + toString(actionIndexValue) + "." + actionName;
+      addDeclaration("const " + actionConst + ":int;\n");
+      addDeclaration("axiom " + actionConst + " == " +
+                     std::to_string(actionIndexValue) + ";\n");
+    }
+
                 /* handle table add commands, i.e., table rules
                     1. find the rules of the current table (from BMV2CmdsAnalyzer)
                     2. add condition statements (according to keys and priority)
@@ -4443,6 +4475,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
                 }
             }
 
+/*
   bool hasDefaultBranch = defaultActionName != nullptr;
   if (hasDefaultBranch) {
     table.addStatement(getIndent() + "if(!" + name + ".hit){\n");
@@ -4456,6 +4489,7 @@ void Translator::translate(const IR::P4Table *p4Table) {
     table.addSucc(defaultActionName);
     addPred(defaultActionName, tableName);
   }
+*/
   table.addStatement(getIndent() + actionIndexName + " := " + actionCall + ";\n");
   table.addStatement(getIndent() + "assume(" + actionIndexName + " >= 0 && " +
                      actionIndexName + " <= " +
