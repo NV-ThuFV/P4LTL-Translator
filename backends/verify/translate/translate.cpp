@@ -730,9 +730,7 @@ void Translator::syncProcedureModifiesToBoogie() const {
     return;
   std::set<std::string> modifies;
   for (cstring variable : entry->modifies) {
-    if (registerVariables.find(variable) != registerVariables.end()) {
-      modifies.insert(std::string(variable));
-    }
+    modifies.insert(std::string(variable));
   }
   mainModifiesCallback_(modifies);
 }
