@@ -52,6 +52,8 @@ private:
 	std::map<cstring, std::vector<cstring>> pred;
 	std::set<cstring> globalVariables;
 	std::set<cstring> registerVariables;
+	std::map<cstring, int> registerSizes;          // reg name -> entry count
+	std::map<cstring, int> registerValueBitwidth;  // reg name -> value width (bits)
 	BoogieProcedure* currentProcedure=nullptr;
 	cstring deparser=nullptr;
 	// options

@@ -81,3 +81,4 @@ set (LIBP4CTOOLKIT_HDRS
 add_cpplint_files (${CMAKE_CURRENT_SOURCE_DIR} "${LIBP4CTOOLKIT_SRCS};${LIBP4CTOOLKIT_HDRS}")
 build_unified(LIBP4CTOOLKIT_SRCS ALL)
 add_library(p4ctoolkit STATIC ${LIBP4CTOOLKIT_SRCS})
+target_compile_definitions(p4ctoolkit PRIVATE P4LTL_DISABLE_GC_OVERRIDE)

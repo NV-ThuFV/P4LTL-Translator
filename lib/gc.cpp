@@ -69,6 +69,7 @@ void operator delete(void *p) _GLIBCXX_USE_NOEXCEPT {
 void *operator new[](std::size_t size) { return ::operator new(size); }
 void operator delete[](void *p) _GLIBCXX_USE_NOEXCEPT { ::operator delete(p); }
 
+#ifndef P4LTL_DISABLE_GC_OVERRIDE
 void *realloc(void *ptr, size_t size) {
     if (!done_init) {
         if (started_init) {
@@ -106,6 +107,7 @@ void *calloc(size_t size, size_t elsize) {
     if (rv) memset(rv, 0, size);
     return rv;
 }
+#endif
 
 #if HAVE_GC_PRINT_STATS
 /* GC_print_stats is not exported as an API symbol and cannot be used on some systems */

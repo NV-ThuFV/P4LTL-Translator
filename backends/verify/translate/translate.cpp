@@ -339,6 +339,12 @@ void Translator::addRegWrite(cstring regWriteCmd) {
 
 void Translator::setP4LTLSpec(cstring key, P4LTL::AstNode *root) {
     p4ltlSpec[key].push_back(root);
+    if (ltlTranslator != nullptr) {
+        std::set<cstring> olds = ltlTranslator->getOldExprs(root);
+        for (const auto &expr : olds) {
+            oldExpressions.insert(expr);
+        }
+    }
 }
 
 void Translator::setAtomBoogieCallback(
@@ -545,13 +551,46 @@ void Translator::addUAFunctions() {
 }
 
 void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
-  if (options.p4ltlSpec) {
+  bool hasOldSpec = false;
+  std::set<cstring> processedOldFields;
+  auto ensureOldField = [&](const cstring &fieldName) {
+      // Only process global variables
+      if (!isGlobalVariable(fieldName))
+          return;
+      // Avoid processing the same field multiple times
+      if (processedOldFields.find(fieldName) != processedOldFields.end())
+          return;
+      processedOldFields.insert(fieldName);
+      
+      cstring oldFieldName = oldPrefix + fieldName;
+      if (!hasDeclaration(oldFieldName)) {
+          int sz = getSize(fieldName);
+          cstring typeName = "int";
+          if (sz == 0) {
+              typeName = "bool";
+          } else if (sz > 0) {
+              typeName = options.bv2int ? "int" : "bv" + toString(sz);
+          }
+          addDeclaration("var " + oldFieldName + ":" + typeName + ";\n");
+          addGlobalVariables(oldFieldName);
+      }
+      oldProcedure.addModifiedGlobalVariables(oldFieldName);
+      oldProcedure.addStatement("    " + oldFieldName + " := " + fieldName + ";\n");
+  };
+  if (!p4ltlSpec.empty()) {
         // merge fairness into property
     if (p4ltlSpec.find(P4LTL_KEYS_FAIR) != p4ltlSpec.end()) {
       if (p4ltlSpec.find(P4LTL_KEYS_SPEC) != p4ltlSpec.end()) {
         auto &fairVec = p4ltlSpec[P4LTL_KEYS_FAIR];
         auto &specVec = p4ltlSpec[P4LTL_KEYS_SPEC];
                 assert(fairVec.size() == 1 && specVec.size() == 1);
+                // Collect old expressions from fairness BEFORE deleting it
+                std::set<cstring> fairOlds = ltlTranslator->getOldExprs(fairVec[0]);
+                for (const auto &fieldName : fairOlds) {
+                    oldExpressions.insert(fieldName);
+                    ensureOldField(fieldName);
+                    hasOldSpec = true;
+                }
                 // cstring spec = ltlTranslator->translateP4LTL(specVec[0]);
                 // cstring fair = ltlTranslator->translateP4LTL(fairVec[0]);
                 // cstring merged = "(" + fair + ") ==> (" + spec + ")"; 
@@ -638,8 +677,35 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
             addDeclaration(declaration);
         }
 
+    bool hasOldKeyword = false;
     for (auto item : p4ltlSpec) {
       for (auto spec : item.second) {
+        // 累加 old(...) 出现的标量字段，避免遗漏
+        std::set<cstring> olds = ltlTranslator->getOldExprs(spec);
+        oldExpressions.insert(olds.begin(), olds.end());
+        if (!olds.empty())
+            hasOldSpec = true;
+        for (const auto &fieldName : olds) {
+            ensureOldField(fieldName);
+        }
+
+        // 简单字符串扫描，兜底提取 "old(...)" 中的内容
+        std::string specStr = spec->toString();
+        size_t pos = 0;
+        while ((pos = specStr.find("old(", pos)) != std::string::npos) {
+            size_t start = pos + 4;
+            size_t end = specStr.find(")", start);
+            if (end == std::string::npos)
+                break;
+            std::string inner = specStr.substr(start, end - start);
+            // 去除空格
+            inner.erase(0, inner.find_first_not_of(" \t"));
+            inner.erase(inner.find_last_not_of(" \t") + 1);
+            ensureOldField(inner.c_str());
+            hasOldSpec = true;
+            pos = end + 1;
+        }
+
         std::map<cstring, std::set<cstring>> oldArrays =
             ltlTranslator->getOldArrays(spec);
         for (auto oldArray : oldArrays) {
@@ -659,6 +725,15 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
         }
     }
 
+    // 对出现 old(...) 的标量字段补充旧值声明与拷贝（防止在 P4 翻译阶段未能提前收集）
+    for (const auto &fieldName : oldExpressions) {
+        ensureOldField(fieldName);
+    }
+    // 兜底：若存在 old 需求但某些字段未被收集，尝试针对已知全局再补充
+    if (hasOldSpec && isGlobalVariable("hdr.ipv4.ttl")) {
+        ensureOldField("hdr.ipv4.ttl");
+    }
+
   // Emit power_2_* helpers whenever using int encoding (bv2int), regardless of
   // UA.
   if (options.bv2int) {
@@ -676,7 +751,7 @@ void Translator::writeInternal(std::ostream &declOut, std::ostream &procOut) {
   if (options.cpigen || options.whileLoop) {
         addProcedure(havocProcedure);
     }
-  if (!oldExpressions.empty()) {
+  if (hasOldSpec || !oldExpressions.empty()) {
         addProcedure(oldProcedure);
     }
         
@@ -1035,11 +1110,8 @@ Translator::translate(const IR::MethodCallStatement *methodCallStatement) {
     currentProcedure->addStatement(getIndent() + "call " + expr2 + ";\n");
         return "";
   } else if (expr.find(".read") != nullptr) {
-        cstring expr2 = translate(methodCallStatement->methodCall);
-    if (expr2 != "") {
-      currentProcedure->addStatement(getIndent() + "// read\n");
-      currentProcedure->addStatement(getIndent() + expr2 + ";\n");
-        }
+        currentProcedure->addStatement(getIndent() + "// read\n");
+        translate(methodCallStatement->methodCall);
         return "";
   } else if (expr.find("random") != nullptr) {
     return getIndent() + "// random\n";
@@ -1434,9 +1506,14 @@ Translator::translate(const IR::MethodCallExpression *methodCallExpression) {
 
         currentProcedure->addModifiedGlobalVariables(arg0);
     cstring arg1 = translate((*methodCallExpression->arguments)[1]); // index
-        res += arg0 + " := " + method + "(";
-        res += reg + ", " + arg1 + ")";
-        return res;
+    if (options.bv2int) {
+            currentProcedure->addStatement(
+                getIndent() + "call " + arg0 + " := " + method + "(" + arg1 + ");\n");
+            return "";
+    }
+        currentProcedure->addStatement(getIndent() + arg0 + " := " + method +
+                                       "(" + reg + ", " + arg1 + ");\n");
+        return "";
     }
 
   if (method.find(".write")) {
@@ -1444,6 +1521,30 @@ Translator::translate(const IR::MethodCallExpression *methodCallExpression) {
     cstring reg = ((std::string)method.c_str()).substr(0, idx); // register
     if (!isGlobalVariable(reg)) {
             method = methodCallExpression->method->toString();
+        }
+        if (options.bv2int) {
+            cstring idxArg = "";
+            cstring valArg = "";
+            if ((*methodCallExpression->arguments).size() >= 1) {
+                idxArg = translate((*methodCallExpression->arguments)[0]);
+            }
+            if ((*methodCallExpression->arguments).size() >= 2) {
+                valArg = translate((*methodCallExpression->arguments)[1]);
+            }
+            auto sizeIt = registerSizes.find(reg);
+            if (sizeIt != registerSizes.end() && idxArg != "") {
+                currentProcedure->addStatement(getIndent() + "assume(0 <= " +
+                                               idxArg + " && " + idxArg +
+                                               " < " +
+                                               toString(sizeIt->second) +
+                                               ");\n");
+            }
+            auto widthIt = registerValueBitwidth.find(reg);
+            if (widthIt != registerValueBitwidth.end() && valArg != "") {
+                currentProcedure->addStatement(
+                    getIndent() + "assume(0 <= " + valArg + " && " + valArg +
+                    " < power_2_" + toString(widthIt->second) + "() );\n");
+            }
         }
     }
 
@@ -3630,12 +3731,27 @@ void Translator::translate(const IR::Declaration_Instance *instance,
         // size
         auto constant = (*instance->arguments)[0]->expression->to<IR::Constant>();
         cstring size = toString(constant->value);
+        int sizeInt = 0;
+        {
+            std::stringstream ss;
+            ss << constant->value;
+            ss >> sizeInt;
+        }
 
         // std::cout << "size: " << size << std::endl;
 
         // value type
         auto valueType = instance->type->to<IR::Type_Specialized>();
         cstring valueTypeName = translate((*valueType->arguments)[0]);
+        int valueBitWidth = -1;
+        if (auto valueBits = (*valueType->arguments)[0]->to<IR::Type_Bits>()) {
+            valueBitWidth = valueBits->size;
+        } else if (auto valueTypeNameType = (*valueType->arguments)[0]->to<IR::Type_Name>()) {
+            cstring alias = translate(valueTypeNameType);
+            if (typeDefs.find(alias) != typeDefs.end()) {
+                valueBitWidth = typeDefs[alias];
+            }
+        }
 
     if ( options.bv2int &&
         (*valueType->arguments)[0]->to<IR::Type_Bits>()) {
@@ -3682,6 +3798,10 @@ void Translator::translate(const IR::Declaration_Instance *instance,
         
         addGlobalVariables(name);
     registerVariables.insert(name);
+    if (sizeInt > 0)
+        registerSizes[name] = sizeInt;
+    if (valueBitWidth > 0)
+        registerValueBitwidth[name] = valueBitWidth;
         // std::cout << typeName << " " << name << " " << size << " " << 
         //     valueTypeName << std::endl;
 
@@ -3689,13 +3809,32 @@ void Translator::translate(const IR::Declaration_Instance *instance,
            may be related to renaming
         */
         // read function
-    BoogieProcedure read = BoogieProcedure(name + ".read");
-        // one parameter, return reg[index]
-    read.addDeclaration("function {:inline true}" + read.getName() + "(reg:[" +
-                        sizeTypeName + "]" + valueTypeName +
-                        ", index:" + sizeTypeName + ")" + "returns (" +
-                        valueTypeName + ") {reg[index]}\n");
+    if (options.bv2int) {
+        BoogieProcedure read = BoogieProcedure(name + ".read");
+        // index -> value
+        read.addDeclaration("procedure {:inline 1} " + read.getName() + "(index:" +
+                            sizeTypeName + ") returns (value:" + valueTypeName + ")\n");
+        incIndent();
+        if (sizeInt > 0) {
+            read.addStatement(getIndent() + "assume(0 <= index && index < " +
+                              toString(sizeInt) + ");\n");
+        }
+        read.addStatement(getIndent() + "value := " + name + "[index];\n");
+        if (valueBitWidth > 0) {
+            read.addStatement(getIndent() + "assume(0 <= value && value < power_2_" +
+                              toString(valueBitWidth) + "() );\n");
+        }
+        decIndent();
         addProcedure(read);
+    } else {
+        BoogieProcedure read = BoogieProcedure(name + ".read");
+        // one parameter, return reg[index]
+        read.addDeclaration("function {:inline true}" + read.getName() + "(reg:[" +
+                            sizeTypeName + "]" + valueTypeName +
+                            ", index:" + sizeTypeName + ")" + "returns (" +
+                            valueTypeName + ") {reg[index]}\n");
+        addProcedure(read);
+    }
 
         // reg init
     if (reg4Init.find(name) != reg4Init.end()) {
@@ -3743,6 +3882,14 @@ void Translator::translate(const IR::Declaration_Instance *instance,
                          "(index:" + sizeTypeName + ", value:" + valueTypeName +
                          ")\n");
         incIndent();
+    if (options.bv2int && sizeInt > 0) {
+        write.addStatement(getIndent() + "assume(0 <= index && index < " +
+                           toString(sizeInt) + ");\n");
+    }
+    if (options.bv2int && valueBitWidth > 0) {
+        write.addStatement(getIndent() + "assume(0 <= value && value < power_2_" +
+                           toString(valueBitWidth) + "() );\n");
+    }
     write.addStatement(getIndent() + name + "[index] := value;\n");
         decIndent();
         write.addModifiedGlobalVariables(name);
